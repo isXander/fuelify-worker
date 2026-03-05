@@ -1,6 +1,3 @@
-/target
-.idea
+.idea/
 *.iml
-.env/
-.wrangler/
-build/
+.DS_Store

@@ -21,5 +21,12 @@ binding = "sync-queue"
 [[queues.consumers]]
 queue = "sync-queue"
 
+[observability]
+[observability.logs]
+enabled = true
+invocation_logs = true
+[observability.traces]
+enabled = true
+
 [build]
 command = "cargo install -q \"worker-build@^0.7\" && worker-build --release"
