@@ -1,0 +1,3 @@
+-- Migration number: 0002 	 2026-03-04T23:06:56.504Z
+ALTER TABLE pfs_fuel_prices
+ADD COLUMN effective_date DATE NOT NULL DEFAULT CURRENT_DATE;

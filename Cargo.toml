@@ -1,0 +1,18 @@
+[package]
+name = "fuelify-worker"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+axum = { version = "0.8", features = ["json"], default-features = false }
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6.5"
+sqlx-d1 = { version = "0.3", features = ["chrono", "macros"] }
+strum = { version = "0.28", features = ["strum_macros"] }
+strum_macros = "0.28"
+urlencoding = "2.1"
+worker = { version = "0.7", features = ["queue", "http", "d1"] }
