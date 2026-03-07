@@ -1,5 +1,6 @@
 import SwiftUI
 import MapKit
+import SwiftData
 
 struct StationDetailView: View {
     let station: StationResponse

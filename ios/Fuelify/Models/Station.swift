@@ -102,6 +102,22 @@ struct StationResponse: Codable, Identifiable, Hashable {
     var motorway: Bool { info.motorway }
     var supermarket: Bool { info.supermarket }
 
+    init(
+        info: StationInfo,
+        location: StationLocation,
+        amenities: [Amenity] = [],
+        latestFuelPrices: [FuelType: FuelPriceSample] = [:],
+        driveTimeSeconds: TimeInterval? = nil,
+        driveDistanceMeters: Double? = nil
+    ) {
+        self.info = info
+        self.location = location
+        self.amenities = amenities
+        self.latestFuelPricesRaw = Dictionary(uniqueKeysWithValues: latestFuelPrices.map { ($0.key.rawValue, $0.value) })
+        self.driveTimeSeconds = driveTimeSeconds
+        self.driveDistanceMeters = driveDistanceMeters
+    }
+
     /// All fuel prices as an array, for iteration in views.
     var fuelPrices: [FuelPriceEntry] {
         latestFuelPrices.map { FuelPriceEntry(fuelType: $0.key, sample: $0.value) }
@@ -187,13 +203,15 @@ struct FuelPriceEntry: Identifiable, Hashable {
 
 // MARK: - Amenity
 
-enum Amenity: String, Codable, Hashable {
+enum Amenity: String, Codable, Hashable, CaseIterable, Identifiable {
+    case customerToilets = "customer_toilets"
+    case carWash = "car_wash"
+    case waterFilling = "water_filling"
     case adbluePackaged = "adblue_packaged"
     case adbluePumps = "adblue_pumps"
-    case carWash = "car_wash"
-    case customerToilets = "customer_toilets"
-    case waterFilling = "water_filling"
     case lpgPumps = "lpg_pumps"
+
+    var id: String { rawValue }
 
     var displayName: String {
         switch self {
@@ -208,8 +226,9 @@ enum Amenity: String, Codable, Hashable {
 
     var systemImage: String {
         switch self {
-        case .adbluePackaged, .adbluePumps: return "drop.fill"
-        case .carWash: return "car.side.rear.and.collision.and.car.side.front"
+        case .adbluePackaged: return "drop.fill"
+        case .adbluePumps: return "fuelpump.fill"
+        case .carWash: return "bubbles.and.sparkles"
         case .customerToilets: return "toilet"
         case .waterFilling: return "spigot"
         case .lpgPumps: return "flame"

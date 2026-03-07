@@ -5,14 +5,18 @@ import MapKit
 struct ContentView: View {
     @State private var locationManager = LocationManager()
     @State private var stationService = StationService()
-    @State private var selectedStation: StationResponse?
+    
     @State private var sheetDetent: PresentationDetent = .fraction(0.25)
     @State private var cameraPosition: MapCameraPosition = .userLocation(fallback: .automatic)
-    @State private var showSearchHere = false
     @State private var visibleRegion: MKCoordinateRegion?
+    
     @State private var isFollowingUser = true
     @State private var isZoomedOut = false
-    @State private var isSatelliteView = false
+    @State private var selectedStation: StationResponse?
+    @State private var showSearchHere = false
+    
+    /// Litres of fuel the user wants to add (from cost calculator). When set, prices show total cost.
+    @State private var litresNeeded: Double? = nil
 
     /// Latitude span threshold beyond which annotations simplify to dots
     private let zoomOutThreshold: Double = 0.15
@@ -21,10 +25,6 @@ struct ContentView: View {
 
     private var selectedFuelType: FuelType {
         preferences.selectedFuelType
-    }
-
-    private var selectedFuelTypeRaw: String {
-        preferences.selectedFuelTypeRaw
     }
     
     private var allPricesForSelectedFuel: [Double] {
@@ -42,35 +42,19 @@ struct ContentView: View {
     }
 
     private var searchSpan: MKCoordinateSpan {
-        visibleRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.0001, longitudeDelta: 0.0001)
-    }
-
-    private func bottomPadding(for height: CGFloat) -> CGFloat {
-        if sheetDetent == .large {
-            return 0
-        } else if sheetDetent == .medium {
-            return height * 0.55
-        } else if sheetDetent == .fraction(0.25) {
-            return height * 0.25
-        } else {
-            return height * 0.08
-        }
+        cameraPosition.region?.span ?? visibleRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.0001, longitudeDelta: 0.0001)
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            mapView
-                .safeAreaPadding(.bottom, bottomPadding(for: geometry.size.height))
-                .sheet(isPresented: .constant(true)) {
-                    stationListSheet
-                }
-                .onChange(of: preferences.selectedFuelTypeRaw) {
-                    handleFuelTypeChange()
-                }
-                .task {
-                    await initialLoad()
-                }
-        }
+        mapView
+            // allow the maps legal attribution to be visible on minimum detent
+            .safeAreaPadding(.bottom, 60)
+            .sheet(isPresented: .constant(true)) {
+                stationListSheet
+            }
+            .onChange(of: preferences.selectedFuelType) {
+                handleFuelTypeChange()
+            }
     }
 
     // MARK: - Subviews
@@ -78,6 +62,7 @@ struct ContentView: View {
     private var mapView: some View {
         Map(position: $cameraPosition, selection: $selectedStation) {
             UserAnnotation()
+            
             ForEach(stationService.stations) { station in
                 stationAnnotation(for: station)
             }
@@ -85,11 +70,12 @@ struct ContentView: View {
         .mapControls {
             MapUserLocationButton()
             MapCompass()
-            MapScaleView()
         }
+        // Apple Maps has this anchored above the sheet but I haven't found a way to reimplement this
         .overlay(alignment: .top) {
             searchHereButton
         }
+        // Reduce footprint of annotations when there are lots of them on the screen close together
         .onMapCameraChange(frequency: .continuous) { context in
             let zoomed = context.region.span.latitudeDelta > zoomOutThreshold
             if zoomed != isZoomedOut {
@@ -101,7 +87,6 @@ struct ContentView: View {
             if cameraPosition.positionedByUser {
                 showSearchHere = true
                 isFollowingUser = false
-                selectedStation = nil
             }
         }
         .onChange(of: cameraPosition.followsUserLocation) { _, following in
@@ -134,7 +119,8 @@ struct ContentView: View {
                     isSupermarket: station.supermarket,
                     isMotorway: station.motorway,
                     isSelected: selectedStation == station,
-                    tintColor: color
+                    tintColor: color,
+                    litresNeeded: litresNeeded
                 )
             }
         }
@@ -168,7 +154,9 @@ struct ContentView: View {
             stations: sortedStations,
             isLoading: stationService.isLoading,
             selectedStation: $selectedStation,
-            preferences: preferences
+            detent: $sheetDetent,
+            preferences: preferences,
+            litresNeeded: $litresNeeded
         )
         .presentationDetents([.fraction(0.1), .fraction(0.25), .medium, .large], selection: $sheetDetent)
         .presentationDragIndicator(.visible)
@@ -198,21 +186,29 @@ struct ContentView: View {
     }
 
     private func handleSelectedStationChange(_ station: StationResponse?) {
-        guard let station else { return }
+        guard let station else {
+            print("station gone")
+            return
+        }
 
         sheetDetent = .medium
-
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(80))
-            withAnimation(.easeInOut(duration: 0.3)) {
-                cameraPosition = .region(MKCoordinateRegion(
-                    center: CLLocationCoordinate2D(
-                        latitude: station.latitude,
-                        longitude: station.longitude
-                    ),
-                    latitudinalMeters: 1000,
-                    longitudinalMeters: 1000
-                ))
+        
+        if let region = visibleRegion {
+            let mapCenter = region.center
+            let mapSpan = region.span
+            
+            if station.location.latitude < mapCenter.latitude {
+                Task { @MainActor in
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        cameraPosition = .region(MKCoordinateRegion(
+                            center: CLLocationCoordinate2D(
+                                latitude: mapCenter.latitude - (mapSpan.latitudeDelta / 2.0),
+                                longitude: mapCenter.longitude
+                            ),
+                            span: mapSpan,
+                        ))
+                    }
+                }
             }
         }
     }

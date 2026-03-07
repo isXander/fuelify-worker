@@ -1,7 +1,14 @@
+//
+//  CarSettingsView.swift
+//  Fuelify
+//
+//  Created by Xander Smith on 07/03/2026.
+//
+
 import SwiftUI
 import SwiftData
 
-struct SettingsView: View {
+struct CarSettingsView: View {
     @Bindable var preferences: UserPreferences
     
     @State private var averagePencePerL: Double? = nil
@@ -119,7 +126,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .navigationTitle("Settings")
+        .navigationTitle("Car Settings")
         .task {
             await getAverageFuelCost()
         }
@@ -133,7 +140,7 @@ struct SettingsView: View {
 
 #Preview {
     NavigationStack {
-        SettingsView(preferences: UserPreferences())
+        CarSettingsView(preferences: UserPreferences())
     }
     .modelContainer(for: UserPreferences.self, inMemory: true)
 }

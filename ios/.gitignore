@@ -1,0 +1,17 @@
+xcuserdata/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+timeline.xctimeline
+playground.xcworkspace
+Packages/
+Package.pins
+Package.resolved
+*.xcodeproj
+.build/
+Dependencies/
+.accio/
+Packages
+xcuserdata
+*.xcodeproj
