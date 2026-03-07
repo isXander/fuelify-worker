@@ -41,12 +41,8 @@ struct ContentView: View {
         return station.fuelPrices.first
     }
 
-    /// Derives a search radius in km from the visible map region span
-    private func radiusFromRegion(_ region: MKCoordinateRegion) -> Double {
-        region.span.longitudeDelta
-        let spanKm = region.span.latitudeDelta * 111.0 // ~111 km per degree latitude
-        // No maximum -- the api will handle showing sparse data across the whole region
-        return max(spanKm / 2.0, 1.0)
+    private var searchSpan: MKCoordinateSpan {
+        visibleRegion?.span ?? MKCoordinateSpan(latitudeDelta: 0.0001, longitudeDelta: 0.0001)
     }
 
     private func bottomPadding(for height: CGFloat) -> CGFloat {
@@ -191,6 +187,8 @@ struct ContentView: View {
                 if let location = locationManager.userLocation {
                     await stationService.fetchStations(
                         near: location.coordinate,
+                        spanLatitude: visibleRegion?.span.latitudeDelta ?? 0.1,
+                        spanLongitude: visibleRegion?.span.longitudeDelta ?? 0.1,
                         fuelType: selectedFuelType,
                         userLocation: location.coordinate
                     )
@@ -219,13 +217,6 @@ struct ContentView: View {
         }
     }
 
-    private var currentRadiusKm: Double {
-        if let region = visibleRegion {
-            return radiusFromRegion(region)
-        }
-        return 10.0
-    }
-
     private func handleFuelTypeChange() {
         showSearchHere = false
         Task {
@@ -233,21 +224,24 @@ struct ContentView: View {
             if cameraPosition.followsUserLocation, let userCoord {
                 await stationService.fetchStations(
                     near: userCoord,
-                    radiusKm: currentRadiusKm,
+                    spanLatitude: searchSpan.latitudeDelta,
+                    spanLongitude: searchSpan.longitudeDelta,
                     fuelType: selectedFuelType,
                     userLocation: userCoord
                 )
             } else if let region = visibleRegion {
                 await stationService.fetchStations(
                     near: region.center,
-                    radiusKm: radiusFromRegion(region),
+                    spanLatitude: searchSpan.latitudeDelta,
+                    spanLongitude: searchSpan.longitudeDelta,
                     fuelType: selectedFuelType,
                     userLocation: userCoord
                 )
             } else if let userCoord {
                 await stationService.fetchStations(
                     near: userCoord,
-                    radiusKm: currentRadiusKm,
+                    spanLatitude: searchSpan.latitudeDelta,
+                    spanLongitude: searchSpan.longitudeDelta,
                     fuelType: selectedFuelType,
                     userLocation: userCoord
                 )
@@ -265,7 +259,8 @@ struct ContentView: View {
         if let location = locationManager.userLocation {
             await stationService.fetchStations(
                 near: location.coordinate,
-                radiusKm: currentRadiusKm,
+                spanLatitude: searchSpan.latitudeDelta,
+                spanLongitude: searchSpan.longitudeDelta,
                 fuelType: selectedFuelType,
                 userLocation: location.coordinate
             )
@@ -293,7 +288,8 @@ struct ContentView: View {
                 showSearchHere = false
                 await stationService.fetchStations(
                     near: region.center,
-                    radiusKm: radiusFromRegion(region),
+                    spanLatitude: searchSpan.latitudeDelta,
+                    spanLongitude: searchSpan.longitudeDelta,
                     fuelType: selectedFuelType,
                     userLocation: locationManager.userLocation?.coordinate
                 )

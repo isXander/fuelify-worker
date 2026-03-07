@@ -11,7 +11,12 @@ class StationService {
 
     private let baseURL = "http://localhost:8787"
 
-    func fetchStations(near coordinate: CLLocationCoordinate2D, radiusKm: Double = 10.0, fuelType: FuelType = .e10, userLocation: CLLocationCoordinate2D? = nil) async {
+    func fetchStations(
+        near coordinate: CLLocationCoordinate2D,
+        spanLatitude: Double, spanLongitude: Double,
+        fuelType: FuelType = .e10,
+        userLocation: CLLocationCoordinate2D? = nil
+    ) async {
         isLoading = true
         errorMessage = nil
 
@@ -19,7 +24,8 @@ class StationService {
             fuelType: fuelType,
             originLat: coordinate.latitude,
             originLon: coordinate.longitude,
-            radiusKm: radiusKm
+            spanLat: spanLatitude,
+            spanLon: spanLongitude,
         )
 
         guard let url = URL(string: "\(baseURL)/nearby") else {
@@ -42,7 +48,6 @@ class StationService {
             }
         } catch {
             errorMessage = error.localizedDescription
-            print(errorMessage)
         }
 
         isLoading = false

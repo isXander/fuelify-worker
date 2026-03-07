@@ -6,13 +6,15 @@ struct NearbyStationsRequest: Encodable {
     let fuelType: FuelType
     let originLat: Double
     let originLon: Double
-    let radiusKm: Double
+    let spanLat: Double
+    let spanLon: Double
 
     enum CodingKeys: String, CodingKey {
         case fuelType = "fuel_type"
         case originLat = "origin_lat"
         case originLon = "origin_lon"
-        case radiusKm = "radius_km"
+        case spanLat = "span_lat"
+        case spanLon = "span_lon"
     }
 }
 
@@ -64,7 +66,6 @@ struct StationResponse: Codable, Identifiable, Hashable {
     let info: StationInfo
     let location: StationLocation
     let amenities: [Amenity]
-    let distanceKm: Double?
 
     /// Raw dictionary keyed by the fuel-type string the API sends (e.g. "E10", "B7STANDARD").
     private let latestFuelPricesRaw: [String: FuelPriceSample]
@@ -85,7 +86,6 @@ struct StationResponse: Codable, Identifiable, Hashable {
         case location
         case amenities
         case latestFuelPricesRaw = "latest_fuel_prices"
-        case distanceKm = "distance_km"
     }
 
     // MARK: - Convenience accessors (minimises view-layer churn)

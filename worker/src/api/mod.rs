@@ -99,6 +99,7 @@ async fn get_stations(
         LEFT  JOIN pfs_amenities a ON a.station_id  = fs.station_id
         INNER JOIN latest_prices lp ON lp.station_id = fs.station_id
         GROUP BY p.id
+        LIMIT 200
     ";
 
     let bind_params: Vec<wasm_bindgen::JsValue> = vec![
@@ -182,6 +183,8 @@ async fn get_stations(
             latest_fuel_prices,
         });
     }
+
+    console_log!("Found {} stations matching criteria", stations.len());
 
     Response::from_json(&NearbyStationsResponse { results: stations })
 }
