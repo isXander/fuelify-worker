@@ -1,13 +1,13 @@
 //
-//  fuelifyUITestsLaunchTests.swift
-//  fuelifyUITests
+//  FuelifyUITestsLaunchTests.swift
+//  FuelifyUITests
 //
 //  Created by Xander Smith on 05/03/2026.
 //
 
 import XCTest
 
-final class fuelifyUITestsLaunchTests: XCTestCase {
+final class FuelifyUITestsLaunchTests: XCTestCase {
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         true

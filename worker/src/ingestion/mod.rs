@@ -2,11 +2,10 @@ mod apitypes;
 mod fetch;
 
 use serde::{Deserialize, Serialize};
-use sqlx_d1::sqlx_core::executor::Executor;
 use worker::*;
 use fetch::*;
-use crate::db::new_d1_connection;
 use wasm_bindgen::JsValue;
+use crate::models::{Pfs, PfsLocation, PfsFuelPrice, PfsAmenity, PfsOpeningHours};
 
 #[event(scheduled)]
 pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> worker::Result<()> {
@@ -91,40 +90,32 @@ async fn do_task(task: &SyncTask, env: &Env) -> Result<TaskOutcome> {
         }
     };
 
-    let pfs_information_batch = match fetch_pfs_information(&token, task.batch_number, task.incremental_from).await {
-        Ok(batch) => {
-            console_log!("Fetched PFS information for batch {}: {} records", task.batch_number, batch.len());
-            batch
-        },
-        Err(FetchError::NotFound) => {
-            console_log!("Received 404 for PFS information batch {}, assuming no more data to fetch", task.batch_number);
+    let info_batch_result = fetch_pfs_information(&token, task.batch_number, task.incremental_from).await;
+    let prices_batch_result = fetch_pfs_fuel_prices(&token, task.batch_number, task.incremental_from).await;
+
+    let (info_batch, prices_batch) = match (info_batch_result, prices_batch_result) {
+        (Err(FetchError::NotFound), Err(FetchError::NotFound)) => {
+            console_log!("Received 404 for both PFS information and fuel prices for batch {}, assuming no more data to fetch", task.batch_number);
             return Ok(TaskOutcome::NoMoreData);
         },
-        Err(FetchError::RequestError(e)) => {
+        (Err(e), _) => {
             console_error!("Error fetching PFS information for batch {}: {:?}", task.batch_number, e);
-            return Err(worker::Error::RustError(format!("Error fetching PFS information: {:?}", e)));
-        }
-    };
-    let pfs_fuel_prices_batch = match fetch_pfs_fuel_prices(&token, task.batch_number, task.incremental_from).await {
-        Ok(batch) => {
-            console_log!("Fetched PFS fuel prices for batch {}: {} records", task.batch_number, batch.len());
-            batch
+            return Err(Error::RustError(format!("Error fetching PFS information: {:?}", e)));
         },
-        Err(FetchError::NotFound) => {
-            console_log!("Received 404 for PFS fuel prices batch {}, assuming no more data to fetch", task.batch_number);
-            return Ok(TaskOutcome::NoMoreData);
-        },
-        Err(e) => {
+        (_, Err(e)) => {
             console_error!("Error fetching PFS fuel prices for batch {}: {:?}", task.batch_number, e);
-            return Err(worker::Error::RustError(format!("Error fetching PFS fuel prices: {:?}", e)));
-        }
+            return Err(Error::RustError(format!("Error fetching PFS fuel prices: {:?}", e)));
+        },
+        (Ok(info), Ok(prices)) => (info, prices),
     };
 
     let db = env.d1("DB")?;
 
     let mut statements = Vec::new();
 
-    for pfs_info in pfs_information_batch {
+    for station_info in info_batch {
+        let node_id = station_info.node_id;
+
         let pfs_stmt = db.prepare(
             "
             INSERT INTO pfs (
@@ -152,10 +143,10 @@ async fn do_task(task: &SyncTask, env: &Env) -> Result<TaskOutcome> {
             "
             )
             .bind(&[
-                pfs_info.node_id.clone().into(), nullable_text(pfs_info.public_phone_number), pfs_info.trading_name.into(),
-                pfs_info.brand_name.into(), pfs_info.is_same_trading_and_brand_name.into(),
-                pfs_info.temporary_closure.into(), pfs_info.permanent_closure.into(),
-                pfs_info.is_motorway_service_station.into(), pfs_info.is_supermarket_service_station.into(),
+                node_id.clone().into(), nullable_text(station_info.public_phone_number), station_info.trading_name.into(),
+                station_info.brand_name.into(), station_info.is_same_trading_and_brand_name.into(),
+                station_info.temporary_closure.into(), station_info.permanent_closure.into(),
+                station_info.is_motorway_service_station.into(), station_info.is_supermarket_service_station.into(),
             ])?;
         statements.push(pfs_stmt);
 
@@ -186,13 +177,13 @@ async fn do_task(task: &SyncTask, env: &Env) -> Result<TaskOutcome> {
             "
             )
             .bind(&[
-                pfs_info.node_id.clone().into(), pfs_info.location.address_line_1.into(), pfs_info.location.address_line_2.into(),
-                pfs_info.location.city.into(), pfs_info.location.country.into(), pfs_info.location.county.into(),
-                pfs_info.location.postcode.into(), pfs_info.location.latitude.into(), pfs_info.location.longitude.into()
+                node_id.clone().into(), station_info.location.address_line_1.into(), station_info.location.address_line_2.into(),
+                station_info.location.city.into(), station_info.location.country.into(), station_info.location.county.into(),
+                station_info.location.postcode.into(), station_info.location.latitude.into(), station_info.location.longitude.into()
             ])?;
         statements.push(pfs_location_stmt);
 
-        for amenity in pfs_info.amenities {
+        for amenity in station_info.amenities {
             let pfs_amenity_stmt = db.prepare(
                 "
                 INSERT INTO pfs_amenities (
@@ -204,19 +195,19 @@ async fn do_task(task: &SyncTask, env: &Env) -> Result<TaskOutcome> {
                 ON CONFLICT (station_id, type) DO NOTHING
                 "
                 )
-                .bind(&[pfs_info.node_id.clone().into(), amenity.to_string().into()])?;
+                .bind(&[node_id.clone().into(), amenity.to_string().into()])?;
             statements.push(pfs_amenity_stmt);
         }
 
         for (day, hours) in [
-            ("monday", &pfs_info.opening_times.usual_days.monday),
-            ("tuesday", &pfs_info.opening_times.usual_days.tuesday),
-            ("wednesday", &pfs_info.opening_times.usual_days.wednesday),
-            ("thursday", &pfs_info.opening_times.usual_days.thursday),
-            ("friday", &pfs_info.opening_times.usual_days.friday),
-            ("saturday", &pfs_info.opening_times.usual_days.saturday),
-            ("sunday", &pfs_info.opening_times.usual_days.sunday),
-            ("bank_holiday", &pfs_info.opening_times.bank_holiday.into()),
+            ("monday", &station_info.opening_times.usual_days.monday),
+            ("tuesday", &station_info.opening_times.usual_days.tuesday),
+            ("wednesday", &station_info.opening_times.usual_days.wednesday),
+            ("thursday", &station_info.opening_times.usual_days.thursday),
+            ("friday", &station_info.opening_times.usual_days.friday),
+            ("saturday", &station_info.opening_times.usual_days.saturday),
+            ("sunday", &station_info.opening_times.usual_days.sunday),
+            ("bank_holiday", &station_info.opening_times.bank_holiday.into()),
         ] {
             let pfs_opening_hours_stmt = db.prepare(
                 "
@@ -236,13 +227,15 @@ async fn do_task(task: &SyncTask, env: &Env) -> Result<TaskOutcome> {
                 "
                 )
                 .bind(&[
-                    pfs_info.node_id.clone().into(), day.into(), hours.open.to_string().into(), hours.close.to_string().into(), hours.is_24_hours.into()
+                    node_id.clone().into(), day.into(), hours.open.to_string().into(), hours.close.to_string().into(), hours.is_24_hours.into()
                 ])?;
             statements.push(pfs_opening_hours_stmt);
         }
     }
-    for pfs_fuel_prices in pfs_fuel_prices_batch {
-        for fuel_price in pfs_fuel_prices.fuel_prices {
+    for station_prices in prices_batch {
+        let node_id = station_prices.node_id;
+
+        for fuel_price in station_prices.fuel_prices {
             let pfs_fuel_price_stmt = db.prepare(
                 "
                 INSERT INTO pfs_fuel_prices (
@@ -258,7 +251,7 @@ async fn do_task(task: &SyncTask, env: &Env) -> Result<TaskOutcome> {
                 "
                 )
                 .bind(&[
-                    pfs_fuel_prices.node_id.clone().into(), fuel_price.fuel_type.to_string().into(),
+                    node_id.clone().into(), fuel_price.fuel_type.to_string().into(),
                     fuel_price.price.into(), fuel_price.price_change_effective_timestamp.format("%Y-%m-%d").to_string().into()
                 ])?;
             statements.push(pfs_fuel_price_stmt);
