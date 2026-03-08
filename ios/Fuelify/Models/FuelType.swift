@@ -26,7 +26,7 @@ enum FuelType: String, Codable, CaseIterable, Identifiable {
         case .e10: return "E10"
         case .e5: return "E5"
         case .b7Standard: return "B7"
-        case .b7Premium: return "B7 Premium"
+        case .b7Premium: return "B7+"
         case .b10: return "B10"
         case .hvo: return "HVO"
         }

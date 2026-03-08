@@ -21,7 +21,7 @@ pub(crate) async fn fetch_bearer_token(env: &Env) -> Result<PFSToken> {
     let headers = Headers::new();
     headers.set("Content-Type", "application/x-www-form-urlencoded")?;
     headers.set("Accept", "application/json")?;
-    headers.set("User-Agent", "Fuelify/0.1")?;
+    headers.set("user-agent", "Fuelify/0.1")?;
 
     let request = Fetch::Request(
         Request::new_with_init(

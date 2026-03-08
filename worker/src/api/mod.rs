@@ -139,8 +139,10 @@ async fn get_stations(
             .unwrap_or("")
             .split(',')
             .filter(|s| !s.is_empty())
-            .filter_map(Amenity::from_db_str)
+            .filter_map(|s| serde_json::from_value(serde_json::Value::String(s.to_string())).ok())
             .collect();
+
+        console_log!("Amenities for station {}: {:?} (raw: {:?})", row.station_id, amenities, row.amenities);
 
         let mut latest_fuel_prices = std::collections::HashMap::new();
         for entry in row.fuel_prices.split(',') {

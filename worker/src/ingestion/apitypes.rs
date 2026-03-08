@@ -59,6 +59,7 @@ pub struct Location {
 // TODO: investigate if there are more amenities
 #[derive(serde::Deserialize, strum_macros::Display)]
 #[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum Amenity {
     AdbluePackaged,
     AdbluePumps,

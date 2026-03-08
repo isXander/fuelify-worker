@@ -137,17 +137,4 @@ pub enum Amenity {
     LpgPumps,
 }
 
-impl Amenity {
-    pub fn from_db_str(s: &str) -> Option<Self> {
-        match s {
-            "adblue_packaged" => Some(Amenity::AdbluePackaged),
-            "adblue_pumps" => Some(Amenity::AdbluePumps),
-            "car_wash" => Some(Amenity::CarWash),
-            "customer_toilets" => Some(Amenity::CustomerToilets),
-            "water_filling" => Some(Amenity::WaterFilling),
-            "lpg_pumps" => Some(Amenity::LpgPumps),
-            _ => None,
-        }
-    }
-}
 

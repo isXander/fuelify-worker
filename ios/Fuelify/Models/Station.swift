@@ -1,4 +1,5 @@
 import Foundation
+import MapKit
 
 // MARK: - Nearby Stations
 
@@ -163,6 +164,10 @@ struct StationLocation: Codable, Hashable {
         case city
         case county
         case postcode
+    }
+    
+    var coordinate: CLLocationCoordinate2D {
+        return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 }
 

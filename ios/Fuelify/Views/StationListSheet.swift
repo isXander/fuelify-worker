@@ -8,183 +8,262 @@ struct StationListSheet: View {
     @Binding var selectedStation: StationResponse?
     @Binding var detent: PresentationDetent
     @Bindable var preferences: UserPreferences
-
-    @State private var navigationPath = NavigationPath()
-    @State private var showSettings = false
-    
-    @State private var searchField = ""
-    @State private var searchAmenities: [Amenity] = []
-    @State private var searchAmenitiesSuggestions: [Amenity] = Amenity.allCases
-    
-    @State private var searchPresented = false
-    
-    @State private var costCalcPresented = false
-    @State private var costCalcCurrent: Int = 3
-    @State private var costCalcDesired: Int = 6
-    
-    /// When set, views show total cost (£) instead of pence-per-litre
-    @Binding var litresNeeded: Double?
+    @Bindable var viewModel: StationListViewModel
 
     private var selectedFuelType: FuelType {
         preferences.selectedFuelType
     }
 
-    private var allPricesForSelectedFuel: [Double] {
-        stations.compactMap { station in
-            station.latestFuelPrices[selectedFuelType]?.price
-        }
+    private var displayedStations: [StationResponse] {
+        viewModel.filteredAndSortedStations(from: stations, fuelType: selectedFuelType)
+    }
+
+    private var allPricesForDisplayedStations: [Double] {
+        displayedStations.compactMap { $0.latestFuelPrices[selectedFuelType]?.price }
     }
 
     var body: some View {
-        NavigationStack(path: $navigationPath) {
-            VStack {
-                if !searchPresented {
-                    mainBody
-                } else {
-                    searchBody
-                }
-            }
-            .navigationTitle("Fuelify")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Picker(selection: $preferences.selectedFuelTypeRaw) {
-                            ForEach(FuelType.allCases) { fuelType in
-                                Text(fuelType.displayName).tag(fuelType.rawValue)
-                            }
-                        } label: {}
-                    } label: {
-                        Text(preferences.selectedFuelType.shortName)
+        NavigationStack(path: $viewModel.navigationPath) {
+            mainBody
+                .navigationTitle("Fuelify")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        fuelTypePicker
+                    }
+
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            viewModel.showSettings = true
+                        } label: {
+                            Image(systemName: "gearshape")
+                        }
+                    }
+
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            viewModel.costCalcPresented = true
+                        } label: {
+                            Label("Enter amount", systemImage: "gauge.with.dots.needle.bottom.50percent.badge.plus")
+                        }
+                        .tint(viewModel.litresNeeded != nil ? .blue : nil)
+                    }
+
+                    ToolbarItem(placement: .topBarLeading) {
+                        filterMenu
                     }
                 }
-                
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showSettings = true
-                    } label: {
-                        Image(systemName: "gearshape")
-                    }
+                .navigationDestination(for: StationResponse.self) { station in
+                    StationDetailView(station: station)
                 }
-                
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        costCalcPresented = true
-                    } label: {
-                        Label("Enter amount", systemImage: "gauge.with.dots.needle.bottom.50percent.badge.plus")
-                    }
-                    .tint(litresNeeded != nil ? .blue : nil)
-                }
-                
-                ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        
-                    } label: {
-                        Label("Sort", systemImage: "arrow.up.arrow.down")
-                    }
-                }
-            }
-            .navigationDestination(for: StationResponse.self) { station in
-                StationDetailView(station: station)
-            }
-            .fullScreenCover(isPresented: $showSettings) {
-                NavigationStack {
-                    SettingsView(preferences: preferences)
-                        .toolbar {
-                            ToolbarItem(placement: .topBarTrailing) {
-                                Button("Done") {
-                                    showSettings = false
+                .fullScreenCover(isPresented: $viewModel.showSettings) {
+                    NavigationStack {
+                        SettingsView(preferences: preferences)
+                            .toolbar {
+                                ToolbarItem(placement: .topBarTrailing) {
+                                    Button("Done") {
+                                        viewModel.showSettings = false
+                                    }
                                 }
                             }
-                        }
-                }
-            }
-            .searchable(text: $searchField, tokens: $searchAmenities, isPresented: $searchPresented, placement: .navigationBarDrawer, prompt: "Filter brands, amenities, and more") { token in
-                Text(token.displayName)
-                
-            }
-            .sheet(isPresented: $costCalcPresented) {
-                TotalPriceCalculatorView(
-                    totalSegments: preferences.tankPrecision,
-                    tankCapacity: preferences.tankCapacity,
-                    currentSegments: $costCalcCurrent,
-                    desiredSegments: $costCalcDesired,
-                    onApply: { litres in
-                        litresNeeded = litres
-                        costCalcPresented = false
-                    },
-                    onClear: {
-                        litresNeeded = nil
-                        costCalcPresented = false
                     }
-                )
-                .presentationDetents([.medium])
-            }
+                }
+                .sheet(isPresented: $viewModel.costCalcPresented) {
+                    TotalPriceCalculatorView(
+                        totalSegments: preferences.tankPrecision,
+                        tankCapacity: preferences.tankCapacity,
+                        currentSegments: $viewModel.costCalcCurrent,
+                        desiredSegments: $viewModel.costCalcDesired,
+                        onApply: { litres in
+                            viewModel.litresNeeded = litres
+                            viewModel.costCalcPresented = false
+                        },
+                        onClear: {
+                            viewModel.litresNeeded = nil
+                            viewModel.costCalcPresented = false
+                        }
+                    )
+                    .presentationDetents([.medium])
+                }
         }
         .onChange(of: selectedStation) { _, station in
             if let station {
-                navigationPath = NavigationPath([station])
+                viewModel.navigationPath = NavigationPath([station])
                 selectedStation = nil
             }
         }
-        .onChange(of: searchPresented) { _, new in
-            detent = new ? .large : .medium
+    }
+
+    // MARK: - Toolbar items
+
+    private var fuelTypePicker: some View {
+        Menu {
+            Picker(selection: $preferences.selectedFuelTypeRaw) {
+                ForEach(FuelType.allCases) { fuelType in
+                    Text(fuelType.displayName).tag(fuelType.rawValue)
+                }
+            } label: {}
+        } label: {
+            Text(preferences.selectedFuelType.shortName)
         }
     }
-    
+
+    private var filterMenu: some View {
+        Menu {
+            // Supermarket toggle
+            Button {
+                viewModel.filterHideSupermarkets.toggle()
+            } label: {
+                Label(
+                    "Hide Supermarkets",
+                    systemImage: viewModel.filterHideSupermarkets ? "checkmark.circle.fill" : "cart"
+                )
+            }
+
+            // Motorway toggle
+            Button {
+                viewModel.filterHideMotorways.toggle()
+            } label: {
+                Label(
+                    "Hide Motorways",
+                    systemImage: viewModel.filterHideMotorways ? "checkmark.circle.fill" : "road.lanes"
+                )
+            }
+            
+            // Regular toggle
+            Button {
+                viewModel.filterHideRegulars.toggle()
+            } label: {
+                Label(
+                    "Hide Regulars",
+                    systemImage: viewModel.filterHideRegulars ? "checkmark.circle.fill" : "house"
+                )
+            }
+            
+            Divider()
+            
+            // Open now toggle
+            Button {
+                viewModel.filterOpenNow.toggle()
+            } label: {
+                Label(
+                    "Open Now",
+                    systemImage: viewModel.filterOpenNow ? "checkmark.circle.fill" : "door.left.hand.open"
+                )
+            }
+            
+            Button {
+                viewModel.filterOpen24Hours.toggle()
+            } label: {
+                Label(
+                    "Open 24 Hours",
+                    systemImage: viewModel.filterOpen24Hours ? "checkmark.circle.fill" : "24.circle"
+                )
+            }
+
+            Divider()
+
+            // Amenities submenu
+            Menu("Amenities") {
+                ForEach(Amenity.allCases) { amenity in
+                    Button {
+                        if viewModel.filterAmenities.contains(amenity) {
+                            viewModel.filterAmenities.remove(amenity)
+                        } else {
+                            viewModel.filterAmenities.insert(amenity)
+                        }
+                    } label: {
+                        Label(
+                            amenity.displayName,
+                            systemImage: viewModel.filterAmenities.contains(amenity)
+                                ? "checkmark.circle.fill"
+                                : amenity.systemImage
+                        )
+                    }
+                }
+            }
+
+            if viewModel.hasActiveFilters {
+                Divider()
+
+                Button(role: .destructive) {
+                    viewModel.clearFilters()
+                } label: {
+                    Label("Clear Filters", systemImage: "xmark.circle")
+                }
+            }
+        } label: {
+            Label("Filter", systemImage: viewModel.hasActiveFilters
+                  ? "line.3.horizontal.decrease.circle.fill"
+                  : "line.3.horizontal.decrease.circle")
+        }
+    }
+
+    // MARK: - Main body
+
     @ViewBuilder
     private var mainBody: some View {
         if isLoading {
             ProgressView("Finding stations...")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if stations.isEmpty {
-            ContentUnavailableView(
-                "No Stations Found",
-                systemImage: "fuelpump.slash",
-                description: Text("No petrol stations found nearby.")
-            )
+        } else if displayedStations.isEmpty {
+            if viewModel.hasActiveFilters && !stations.isEmpty {
+                ContentUnavailableView(
+                    "No Matching Stations",
+                    systemImage: "line.3.horizontal.decrease.circle",
+                    description: Text("Try adjusting your filters.")
+                )
+            } else {
+                ContentUnavailableView(
+                    "No Stations Found",
+                    systemImage: "fuelpump.slash",
+                    description: Text("No petrol stations found nearby.")
+                )
+            }
         } else {
-            VStack(alignment: .leading) {
-                List {
-                    Section("Nearby") {
-                        ForEach(stations) { station in
-                            StationRow(
-                                station: station,
-                                selectedFuelTypeRaw: preferences.selectedFuelTypeRaw,
-                                litresNeeded: litresNeeded,
-                                priceColor: {
-                                    if let p = station.latestFuelPrices[selectedFuelType]?.price {
-                                        return priceTierColor(for: p, in: allPricesForSelectedFuel)
-                                    } else {
-                                        return nil
-                                    }
-                                }()
+            let allPrices = allPricesForDisplayedStations
+
+            List {
+                Section {
+                    ForEach(displayedStations) { station in
+                        StationRow(
+                            station: station,
+                            selectedFuelTypeRaw: preferences.selectedFuelTypeRaw,
+                            litresNeeded: viewModel.litresNeeded,
+                            priceColor: viewModel.priceColor(
+                                for: station,
+                                allPrices: allPrices,
+                                fuelType: selectedFuelType
                             )
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                selectedStation = station
-                            }
+                        )
+                        .onTapGesture {
+                            selectedStation = station
                         }
                     }
+                } header: {
+                    HStack {
+                        Text("Nearby")
+
+                        Spacer()
+
+                        sortPicker
+                    }
                 }
+                .headerProminence(.increased)
             }
         }
     }
-    
-    @ViewBuilder
-    private var searchBody: some View {
-        Form {
-            Section("Amenities") {
-                ForEach(Amenity.allCases) { amenity in
-                    Button {
-                        searchAmenities.append(amenity)
-                    } label: {
-                        Label(amenity.displayName, systemImage: amenity.systemImage)
-                    }
-                    .buttonStyle(.plain)
-                }
+
+    // MARK: - Sort picker
+
+    private var sortPicker: some View {
+        Picker("Sort", selection: $viewModel.sortOption) {
+            ForEach(SortOption.allCases) { option in
+                Label(option.rawValue, systemImage: option.systemImage)
+                    .tag(option)
             }
         }
+        .buttonStyle(.glass)
     }
 }
 
@@ -349,7 +428,7 @@ struct TotalPriceCalculatorView: View {
                 selectedStation: .constant(nil),
                 detent: $detent,
                 preferences: UserPreferences(),
-                litresNeeded: .constant(nil)
+                viewModel: StationListViewModel()
             )
             .presentationDetents([.fraction(0.25), .medium, .large], selection: $detent)
             .presentationDragIndicator(.visible)
