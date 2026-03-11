@@ -32,8 +32,9 @@
 
   // Make sure that the worker serves requests nearest to the Fuel Finder API,
   // aka, the UK. This is important. The API rejects any non-UK requests.
+  // Picked ukwest over uksouth because it's further from France, so it's less likely that Cloudflare choose a non-UK datacenter.
   "placement": {
-    "hostname": "www.fuel-finder.service.gov.uk"
+    "region": "azure:ukwest"
   },
 
   // The Fuel Finder API only returns batches of 500 with no filtering, so we need to store the data ourselves for efficient querying.
