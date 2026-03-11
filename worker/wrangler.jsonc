@@ -55,6 +55,14 @@
     }
   ],
 
+  "routes": [
+    {
+      "pattern": "fuelify.isxander.dev",
+      "zone_name": "isxander.dev",
+      "custom_domain": true
+    }
+  ],
+
   // For debugging.
   "observability": {
     "logs": {
