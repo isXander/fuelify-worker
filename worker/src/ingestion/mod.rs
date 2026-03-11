@@ -90,8 +90,8 @@ async fn do_task(task: &SyncTask, env: &Env) -> Result<TaskOutcome> {
         }
     };
 
-    let info_batch_result = fetch_pfs_information(&token, task.batch_number, task.incremental_from).await;
-    let prices_batch_result = fetch_pfs_fuel_prices(&token, task.batch_number, task.incremental_from).await;
+    let info_batch_result = fetch_pfs_information(env, &token, task.batch_number, task.incremental_from).await;
+    let prices_batch_result = fetch_pfs_fuel_prices(env, &token, task.batch_number, task.incremental_from).await;
 
     let (info_batch, prices_batch) = match (info_batch_result, prices_batch_result) {
         (Err(FetchError::NotFound), Err(FetchError::NotFound)) => {

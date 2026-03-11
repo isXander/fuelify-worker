@@ -1,9 +1,10 @@
 mod apitypes;
+mod proxy;
 
 use apitypes::*;
 use serde::Deserialize;
 use worker::*;
-
+use crate::api::proxy::on_fuel_finder_proxy;
 
 #[event(fetch)]
 async fn fetch(
@@ -13,7 +14,8 @@ async fn fetch(
 ) -> Result<Response> {
     let app = Router::new()
         .post_async("/nearby", get_stations)
-        .post_async("/price_history", get_price_history);
+        .post_async("/price_history", get_price_history)
+        .on_async("/fuel-finder-proxy/*path", on_fuel_finder_proxy);
 
     app.run(req, env).await
 }

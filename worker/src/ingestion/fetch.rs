@@ -2,9 +2,15 @@ use worker::*;
 use crate::ingestion::apitypes::*;
 use crate::ingestion::fetch::FetchError::RequestError;
 
-const FUEL_FINDER_API_ENDPOINT: &str = "https://www.fuel-finder.service.gov.uk/api/v1";
+fn get_proxy_info(env: &Env) -> (String, String) {
+    let endpoint = env.secret("PROXY_URL").unwrap().to_string();
+    let secret = env.secret("PROXY_SECRET").unwrap().to_string();
+    (endpoint, secret)
+}
 
 pub(crate) async fn fetch_bearer_token(env: &Env) -> Result<PFSToken> {
+    let (proxy_endpoint, proxy_secret) = get_proxy_info(env);
+
     let grant_type = "client_credentials";
     let client_id = env.secret("GOVUK_CLIENT_ID")?.to_string();
     let client_secret = env.secret("GOVUK_CLIENT_SECRET")?.to_string();
@@ -21,11 +27,12 @@ pub(crate) async fn fetch_bearer_token(env: &Env) -> Result<PFSToken> {
     let headers = Headers::new();
     headers.set("Content-Type", "application/x-www-form-urlencoded")?;
     headers.set("Accept", "application/json")?;
-    headers.set("user-agent", "Fuelify/0.1")?;
+    headers.set("User-Agent", "Fuelify/0.1")?;
+    headers.set("X-Fuelify-Secret", &proxy_secret)?;
 
     let request = Fetch::Request(
         Request::new_with_init(
-            &format!("{}/oauth/generate_access_token", FUEL_FINDER_API_ENDPOINT),
+            &format!("{}/oauth/generate_access_token", proxy_endpoint),
             &RequestInit {
                 method: Method::Post,
                 headers: headers,
@@ -57,19 +64,25 @@ pub(crate) async fn fetch_bearer_token(env: &Env) -> Result<PFSToken> {
 }
 
 pub(crate) async fn fetch_pfs_information(
-    token: &str, batch_number: u32, incremental_from: Option<chrono::NaiveDate>
+    env: &Env,
+    token: &str,
+    batch_number: u32,
+    incremental_from: Option<chrono::NaiveDate>,
 ) -> Result<PFSInformationResponse, FetchError> {
+    let (proxy_endpoint, proxy_secret) = get_proxy_info(env);
+
     let query_params = match incremental_from {
         Some(date) => format!("?batch-number={}&effective-start-timestamp={}", batch_number, date),
         None => format!("?batch-number={}", batch_number),
     };
-    let url = format!("{}/pfs{}", FUEL_FINDER_API_ENDPOINT, query_params);
+    let url = format!("{}/pfs{}", proxy_endpoint, query_params);
 
     let headers = Headers::new();
     headers.set("Content-Type", "application/json")?;
     headers.set("Accept", "application/json")?;
     headers.set("User-Agent", "Fuelify/0.1")?;
     headers.set("Authorization", &format!("Bearer {}", token))?;
+    headers.set("X-Fuelify-Secret", &proxy_secret)?;
 
     let request = Fetch::Request(
         Request::new_with_init(
@@ -99,19 +112,25 @@ pub(crate) async fn fetch_pfs_information(
 }
 
 pub(crate) async fn fetch_pfs_fuel_prices(
-    token: &str, batch_number: u32, incremental_from: Option<chrono::NaiveDate>
+    env: &Env,
+    token: &str,
+    batch_number: u32,
+    incremental_from: Option<chrono::NaiveDate>,
 ) -> Result<PFSFuelPricesResponse, FetchError> {
+    let (proxy_endpoint, proxy_secret) = get_proxy_info(env);
+
     let query_params = match incremental_from {
         Some(date) => format!("?batch-number={}&effective-start-timestamp={}", batch_number, date),
         None => format!("?batch-number={}", batch_number),
     };
-    let url = format!("{}/pfs/fuel-prices{}", FUEL_FINDER_API_ENDPOINT, query_params);
+    let url = format!("{}/pfs/fuel-prices{}", proxy_endpoint, query_params);
 
     let headers = Headers::new();
     headers.set("Content-Type", "application/json")?;
     headers.set("Accept", "application/json")?;
     headers.set("User-Agent", "Fuelify/0.1")?;
     headers.set("Authorization", &format!("Bearer {}", token))?;
+    headers.set("X-Fuelify-Secret", &proxy_secret)?;
 
     let request = Fetch::Request(
         Request::new_with_init(

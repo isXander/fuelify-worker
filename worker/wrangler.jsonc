@@ -1,0 +1,67 @@
+{
+  "name": "fuelify-worker",
+  "main": "build/index.js",
+  "compatibility_date": "2026-03-04",
+
+  "build": {
+    "command": "cargo install -q \"worker-build@^0.7\" && worker-build --release"
+  },
+
+  // Triggers ingestion of Fuel Finder data.
+  "triggers": {
+    "crons": ["0 * * * *"] // every hour
+  },
+
+  // The trigger above just submits batch no.1 to the queue.
+  // Once that batch is processed, the worker queues batch no.2, and so on.
+  // It is sequential.
+  "queues": {
+    "producers": [
+      {
+        "queue": "sync-queue",
+        "binding": "sync-queue"
+      }
+    ],
+    // The worker consumes from the same queue.
+    "consumers": [
+      {
+        "queue": "sync-queue"
+      }
+    ]
+  },
+
+  // Make sure that the worker serves requests nearest to the Fuel Finder API,
+  // aka, the UK. This is important. The API rejects any non-UK requests.
+  "placement": {
+    "hostname": "www.fuel-finder.service.gov.uk"
+  },
+
+  // The Fuel Finder API only returns batches of 500 with no filtering, so we need to store the data ourselves for efficient querying.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "fuelify-d1",
+      "database_id": "90254f0a-9897-4697-bbaf-df5668161cdf"
+    }
+  ],
+
+  // Used to track when the last ingestion happened,
+  // so we can request incremental updates from the API on subsequent runs.
+  "kv_namespaces": [
+    {
+      "binding": "fuelify_ingest",
+      "id": "f3bb7e1457b448e087552eaea78ae67c"
+    }
+  ],
+
+  // For debugging.
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": true
+    }
+  }
+}
