@@ -39,31 +39,24 @@ async fn get_stations(
     let half_span_lat = body.span_lat / 2.0;
     let half_span_lon = body.span_lon / 2.0;
 
-    // Bind params:
-    //   ?1: fuel_type
-    //   ?2: origin_lat - half_span_lat  (bbox south)
-    //   ?3: origin_lat + half_span_lat  (bbox north)
-    //   ?4: origin_lon - half_span_lon  (bbox west)
-    //   ?5: origin_lon + half_span_lon  (bbox east)
-    //   ?6: fuel_type (repeated for latest_prices CTE)
+    // ?1 fuel_type, ?2 bbox south, ?3 bbox north, ?4 bbox west, ?5 bbox east
     let sql = "
         WITH filtered_stations AS (
-            SELECT l.station_id
-            FROM pfs_locations l
-            INNER JOIN pfs p ON p.id = l.station_id
-            INNER JOIN pfs_fuel_prices fp ON fp.station_id = l.station_id
-            WHERE l.latitude  BETWEEN ?2 AND ?3
-              AND l.longitude BETWEEN ?4 AND ?5
-              AND p.temporary_closure = FALSE
-              AND p.permanent_closure = FALSE
+            SELECT s.id AS station_id
+            FROM stations s
+            INNER JOIN fuel_prices fp ON fp.station_id = s.id
+            WHERE s.latitude  BETWEEN ?2 AND ?3
+              AND s.longitude BETWEEN ?4 AND ?5
+              AND s.temporary_closure = FALSE
+              AND s.permanent_closure = FALSE
               AND fp.fuel_type = ?1
               AND fp.effective_date = (
                   SELECT MAX(fp2.effective_date)
-                  FROM pfs_fuel_prices fp2
-                  WHERE fp2.station_id = l.station_id
+                  FROM fuel_prices fp2
+                  WHERE fp2.station_id = s.id
                     AND fp2.fuel_type = ?1
               )
-            GROUP BY l.station_id
+            GROUP BY s.id
         ),
         latest_prices AS (
             SELECT
@@ -71,36 +64,34 @@ async fn get_stations(
                 fp.fuel_type,
                 fp.price,
                 fp.effective_date
-            FROM pfs_fuel_prices fp
+            FROM fuel_prices fp
             INNER JOIN filtered_stations fs ON fs.station_id = fp.station_id
             WHERE fp.effective_date = (
                 SELECT MAX(fp2.effective_date)
-                FROM pfs_fuel_prices fp2
+                FROM fuel_prices fp2
                 WHERE fp2.station_id = fp.station_id
                   AND fp2.fuel_type = fp.fuel_type
             )
         )
         SELECT
-            p.id              AS station_id,
-            p.trading_name,
-            p.brand_name,
-            p.motorway,
-            p.supermarket,
-            l.latitude,
-            l.longitude,
-            l.address_line_1,
-            l.address_line_2,
-            l.city,
-            l.county,
-            l.postcode,
-            GROUP_CONCAT(DISTINCT a.type)                                                      AS amenities,
+            s.id              AS station_id,
+            s.trading_name,
+            s.brand_name,
+            s.motorway,
+            s.supermarket,
+            s.latitude,
+            s.longitude,
+            s.address_line_1,
+            s.address_line_2,
+            s.city,
+            s.county,
+            s.postcode,
+            s.amenities,
             GROUP_CONCAT(DISTINCT lp.fuel_type || '|' || lp.price || '|' || lp.effective_date) AS fuel_prices
         FROM filtered_stations fs
-        INNER JOIN pfs p           ON p.id          = fs.station_id
-        INNER JOIN pfs_locations l ON l.station_id  = fs.station_id
-        LEFT  JOIN pfs_amenities a ON a.station_id  = fs.station_id
+        INNER JOIN stations s      ON s.id          = fs.station_id
         INNER JOIN latest_prices lp ON lp.station_id = fs.station_id
-        GROUP BY p.id
+        GROUP BY s.id
         LIMIT 200
     ";
 
@@ -128,7 +119,7 @@ async fn get_stations(
         city: String,
         county: String,
         postcode: String,
-        amenities: Option<String>,
+        amenities: String,
         fuel_prices: String,
     }
 
@@ -136,15 +127,7 @@ async fn get_stations(
 
     let mut stations: Vec<Station> = Vec::with_capacity(result_rows.len());
     for row in result_rows {
-        let amenities = row.amenities
-            .as_deref()
-            .unwrap_or("")
-            .split(',')
-            .filter(|s| !s.is_empty())
-            .filter_map(|s| serde_json::from_value(serde_json::Value::String(s.to_string())).ok())
-            .collect();
-
-        console_log!("Amenities for station {}: {:?} (raw: {:?})", row.station_id, amenities, row.amenities);
+        let amenities: Vec<Amenity> = serde_json::from_str(&row.amenities).unwrap_or_default();
 
         let mut latest_fuel_prices = std::collections::HashMap::new();
         for entry in row.fuel_prices.split(',') {
@@ -154,14 +137,14 @@ async fn get_stations(
             else {
                 continue;
             };
-            let (Some(ft), Ok(price)) = (
+            let (Some(ft), Ok(price_tenths)) = (
                 FuelType::from_db_str(fuel_type_str),
-                price_str.parse::<f64>(),
+                price_str.parse::<i64>(),
             ) else {
                 continue;
             };
             latest_fuel_prices.insert(ft, FuelPriceSample {
-                price,
+                price: price_tenths as f64 / 10.0,
                 effective_date: effective_date.to_string(),
             });
         }
@@ -187,8 +170,6 @@ async fn get_stations(
             latest_fuel_prices,
         });
     }
-
-    console_log!("Found {} stations matching criteria", stations.len());
 
     Response::from_json(&NearbyStationsResponse { results: stations })
 }
@@ -218,7 +199,7 @@ async fn get_price_history(
 
     let sql = "
         SELECT price, effective_date
-        FROM pfs_fuel_prices
+        FROM fuel_prices
         WHERE station_id = ?
           AND fuel_type = ?
           AND effective_date >= ?
@@ -235,14 +216,14 @@ async fn get_price_history(
 
     #[derive(Deserialize)]
     struct PriceRow {
-        price: f64,
+        price: i64,
         effective_date: String,
     }
 
     let samples = rows.results::<PriceRow>()?
         .into_iter()
         .map(|r| FuelPriceSample {
-            price: r.price,
+            price: r.price as f64 / 10.0,
             effective_date: r.effective_date,
         })
         .collect();
@@ -264,7 +245,3 @@ impl ErrorResponse {
         }
     }
 }
-
-
-
-

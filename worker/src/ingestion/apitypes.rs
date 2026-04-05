@@ -102,15 +102,6 @@ pub struct BankHoliday {
     pub is_24_hours: bool,
 }
 
-impl Into<DayHours> for BankHoliday {
-    fn into(self) -> DayHours {
-        DayHours {
-            open: self.open_time,
-            close: self.close_time,
-            is_24_hours: self.is_24_hours,
-        }
-    }
-}
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "snake_case")]

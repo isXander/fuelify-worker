@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use worker::*;
 use fetch::*;
 use wasm_bindgen::JsValue;
-use crate::models::{Pfs, PfsLocation, PfsFuelPrice, PfsAmenity, PfsOpeningHours};
 
 #[event(scheduled)]
 pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> worker::Result<()> {
@@ -18,12 +17,13 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
             chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()
         },
         None => {
-            console_log!("No last sync date found in KV, starting with None");
+            console_log!("No last sync date found in KV, starting full sync");
             None
         }
     };
 
     let first_task = SyncTask {
+        phase: SyncPhase::Information,
         batch_number: 1,
         incremental_from: last_date,
     };
@@ -35,12 +35,21 @@ pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) 
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SyncTask {
+    phase: SyncPhase,
     batch_number: u32,
     incremental_from: Option<chrono::NaiveDate>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+enum SyncPhase {
+    /// Fetch station information batches first so all stations exist in DB.
+    Information,
+    /// Then fetch fuel price batches — stations are guaranteed to exist.
+    FuelPrices,
+}
+
 #[event(queue)]
-pub async fn queue(message_batch: MessageBatch<SyncTask>, env: Env, ctx: Context) -> worker::Result<()> {
+pub async fn queue(message_batch: MessageBatch<SyncTask>, env: Env, _ctx: Context) -> worker::Result<()> {
     let sync_queue = env.queue("sync-queue")?;
 
     for message in message_batch.messages()? {
@@ -48,21 +57,35 @@ pub async fn queue(message_batch: MessageBatch<SyncTask>, env: Env, ctx: Context
         console_log!("Processing task: {:?}", task);
 
         match do_task(&task, &env).await {
-            Ok(TaskOutcome::Success) => {
-                console_log!("Task completed successfully: {:?}", task);
+            Ok(TaskOutcome::Continue) => {
+                console_log!("Batch completed, queuing next: {:?}", task);
                 message.ack();
 
                 let next_task = SyncTask {
+                    phase: task.phase.clone(),
                     batch_number: task.batch_number + 1,
                     incremental_from: task.incremental_from,
                 };
                 sync_queue.send(&next_task).await?;
             }
-            Ok(TaskOutcome::NoMoreData) => {
-                console_log!("No more data to fetch for task {:?}, not queuing next batch", task);
+            Ok(TaskOutcome::PhaseComplete) => {
                 message.ack();
 
-                conclude_sync(&env, chrono::Utc::now().date_naive()).await?;
+                match task.phase {
+                    SyncPhase::Information => {
+                        console_log!("Information phase complete, starting FuelPrices phase");
+                        let next_task = SyncTask {
+                            phase: SyncPhase::FuelPrices,
+                            batch_number: 1,
+                            incremental_from: task.incremental_from,
+                        };
+                        sync_queue.send(&next_task).await?;
+                    }
+                    SyncPhase::FuelPrices => {
+                        console_log!("FuelPrices phase complete, sync done");
+                        conclude_sync(&env, chrono::Utc::now().date_naive()).await?;
+                    }
+                }
             }
             Err(e) => {
                 console_error!("Error processing task {:?}: {:?}", task, e);
@@ -90,46 +113,41 @@ async fn do_task(task: &SyncTask, env: &Env) -> Result<TaskOutcome> {
         }
     };
 
-    let info_batch_result = fetch_pfs_information(env, &token, task.batch_number, task.incremental_from).await;
-    let prices_batch_result = fetch_pfs_fuel_prices(env, &token, task.batch_number, task.incremental_from).await;
+    match task.phase {
+        SyncPhase::Information => do_information_batch(env, &token, task).await,
+        SyncPhase::FuelPrices => do_fuel_prices_batch(env, &token, task).await,
+    }
+}
 
-    let (info_batch, prices_batch) = match (info_batch_result, prices_batch_result) {
-        (Err(FetchError::NotFound), Err(FetchError::NotFound)) => {
-            console_log!("Received 404 for both PFS information and fuel prices for batch {}, assuming no more data to fetch", task.batch_number);
-            return Ok(TaskOutcome::NoMoreData);
-        },
-        (Err(e), _) => {
-            console_error!("Error fetching PFS information for batch {}: {:?}", task.batch_number, e);
-            return Err(Error::RustError(format!("Error fetching PFS information: {:?}", e)));
-        },
-        (_, Err(e)) => {
-            console_error!("Error fetching PFS fuel prices for batch {}: {:?}", task.batch_number, e);
-            return Err(Error::RustError(format!("Error fetching PFS fuel prices: {:?}", e)));
-        },
-        (Ok(info), Ok(prices)) => (info, prices),
+async fn do_information_batch(env: &Env, token: &str, task: &SyncTask) -> Result<TaskOutcome> {
+    let info_batch = match fetch_pfs_information(env, token, task.batch_number, task.incremental_from).await {
+        Ok(batch) => batch,
+        Err(FetchError::NotFound) => {
+            console_log!("Info batch {} returned 404, information phase complete", task.batch_number);
+            return Ok(TaskOutcome::PhaseComplete);
+        }
+        Err(FetchError::RequestError(e)) => return Err(e),
     };
 
     let db = env.d1("DB")?;
-
     let mut statements = Vec::new();
 
     for station_info in info_batch {
-        let node_id = station_info.node_id;
+        let amenities_json = serde_json::to_string(
+            &station_info.amenities.iter().map(|a| a.to_string()).collect::<Vec<_>>()
+        ).unwrap_or_else(|_| "[]".to_string());
 
-        let pfs_stmt = db.prepare(
-            "
-            INSERT INTO pfs (
-                id,
-                phone_number,
-                trading_name,
-                brand_name,
-                trading_as_brand,
-                temporary_closure,
-                permanent_closure,
-                motorway,
-                supermarket
+        let opening_hours_json = serialize_opening_hours(&station_info.opening_times);
+
+        let stmt = db.prepare(
+            "INSERT INTO stations (
+                id, phone_number, trading_name, brand_name, trading_as_brand,
+                temporary_closure, permanent_closure, motorway, supermarket,
+                address_line_1, address_line_2, city, country, county, postcode,
+                latitude, longitude, amenities, opening_hours
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
+                ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19
             )
             ON CONFLICT (id) DO UPDATE SET
                 phone_number = EXCLUDED.phone_number,
@@ -139,33 +157,7 @@ async fn do_task(task: &SyncTask, env: &Env) -> Result<TaskOutcome> {
                 temporary_closure = EXCLUDED.temporary_closure,
                 permanent_closure = EXCLUDED.permanent_closure,
                 motorway = EXCLUDED.motorway,
-                supermarket = EXCLUDED.supermarket;
-            "
-            )
-            .bind(&[
-                node_id.clone().into(), nullable_text(station_info.public_phone_number), station_info.trading_name.into(),
-                station_info.brand_name.into(), station_info.is_same_trading_and_brand_name.into(),
-                station_info.temporary_closure.into(), station_info.permanent_closure.into(),
-                station_info.is_motorway_service_station.into(), station_info.is_supermarket_service_station.into(),
-            ])?;
-        statements.push(pfs_stmt);
-
-        let pfs_location_stmt = db.prepare(
-            "
-            INSERT INTO pfs_locations (
-                station_id,
-                address_line_1,
-                address_line_2,
-                city,
-                country,
-                county,
-                postcode,
-                latitude,
-                longitude
-            ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?
-            )
-            ON CONFLICT (station_id) DO UPDATE SET
+                supermarket = EXCLUDED.supermarket,
                 address_line_1 = EXCLUDED.address_line_1,
                 address_line_2 = EXCLUDED.address_line_2,
                 city = EXCLUDED.city,
@@ -173,99 +165,109 @@ async fn do_task(task: &SyncTask, env: &Env) -> Result<TaskOutcome> {
                 county = EXCLUDED.county,
                 postcode = EXCLUDED.postcode,
                 latitude = EXCLUDED.latitude,
-                longitude = EXCLUDED.longitude;
-            "
-            )
-            .bind(&[
-                node_id.clone().into(), station_info.location.address_line_1.into(), station_info.location.address_line_2.into(),
-                station_info.location.city.into(), station_info.location.country.into(), station_info.location.county.into(),
-                station_info.location.postcode.into(), station_info.location.latitude.into(), station_info.location.longitude.into()
-            ])?;
-        statements.push(pfs_location_stmt);
-
-        for amenity in station_info.amenities {
-            let pfs_amenity_stmt = db.prepare(
-                "
-                INSERT INTO pfs_amenities (
-                    station_id,
-                    type
-                ) VALUES (
-                    ?, ?
-                )
-                ON CONFLICT (station_id, type) DO NOTHING
-                "
-                )
-                .bind(&[node_id.clone().into(), amenity.to_string().into()])?;
-            statements.push(pfs_amenity_stmt);
-        }
-
-        for (day, hours) in [
-            ("monday", &station_info.opening_times.usual_days.monday),
-            ("tuesday", &station_info.opening_times.usual_days.tuesday),
-            ("wednesday", &station_info.opening_times.usual_days.wednesday),
-            ("thursday", &station_info.opening_times.usual_days.thursday),
-            ("friday", &station_info.opening_times.usual_days.friday),
-            ("saturday", &station_info.opening_times.usual_days.saturday),
-            ("sunday", &station_info.opening_times.usual_days.sunday),
-            ("bank_holiday", &station_info.opening_times.bank_holiday.into()),
-        ] {
-            let pfs_opening_hours_stmt = db.prepare(
-                "
-                INSERT INTO pfs_opening_hours (
-                    station_id,
-                    day,
-                    open_time,
-                    close_time,
-                    is_24_hours
-                ) VALUES (
-                    ?, ?, ?, ?, ?
-                )
-                ON CONFLICT (station_id, day) DO UPDATE SET
-                    open_time = EXCLUDED.open_time,
-                    close_time = EXCLUDED.close_time,
-                    is_24_hours = EXCLUDED.is_24_hours
-                "
-                )
-                .bind(&[
-                    node_id.clone().into(), day.into(), hours.open.to_string().into(), hours.close.to_string().into(), hours.is_24_hours.into()
-                ])?;
-            statements.push(pfs_opening_hours_stmt);
-        }
+                longitude = EXCLUDED.longitude,
+                amenities = EXCLUDED.amenities,
+                opening_hours = EXCLUDED.opening_hours"
+        ).bind(&[
+            station_info.node_id.into(),
+            nullable_text(station_info.public_phone_number),
+            station_info.trading_name.into(),
+            station_info.brand_name.into(),
+            station_info.is_same_trading_and_brand_name.into(),
+            station_info.temporary_closure.into(),
+            station_info.permanent_closure.into(),
+            station_info.is_motorway_service_station.into(),
+            station_info.is_supermarket_service_station.into(),
+            station_info.location.address_line_1.into(),
+            station_info.location.address_line_2.into(),
+            station_info.location.city.into(),
+            station_info.location.country.into(),
+            station_info.location.county.into(),
+            station_info.location.postcode.into(),
+            station_info.location.latitude.into(),
+            station_info.location.longitude.into(),
+            amenities_json.into(),
+            opening_hours_json.into(),
+        ])?;
+        statements.push(stmt);
     }
-    for station_prices in prices_batch {
-        let node_id = station_prices.node_id;
 
+    if !statements.is_empty() {
+        db.batch(statements).await?;
+    }
+
+    Ok(TaskOutcome::Continue)
+}
+
+async fn do_fuel_prices_batch(env: &Env, token: &str, task: &SyncTask) -> Result<TaskOutcome> {
+    let prices_batch = match fetch_pfs_fuel_prices(env, token, task.batch_number, task.incremental_from).await {
+        Ok(batch) => batch,
+        Err(FetchError::NotFound) => {
+            console_log!("Prices batch {} returned 404, fuel prices phase complete", task.batch_number);
+            return Ok(TaskOutcome::PhaseComplete);
+        }
+        Err(FetchError::RequestError(e)) => return Err(e),
+    };
+
+    let db = env.d1("DB")?;
+    let mut statements = Vec::new();
+
+    for station_prices in prices_batch {
         for fuel_price in station_prices.fuel_prices {
-            let pfs_fuel_price_stmt = db.prepare(
-                "
-                INSERT INTO pfs_fuel_prices (
-                    station_id,
-                    fuel_type,
-                    price,
-                    effective_date
-                ) VALUES (
-                    ?, ?, ?, ?
-                )
+            let price_tenths = normalize_price(fuel_price.price);
+            let stmt = db.prepare(
+                "INSERT INTO fuel_prices (station_id, fuel_type, price, effective_date)
+                VALUES (?1, ?2, ?3, ?4)
                 ON CONFLICT (station_id, fuel_type, effective_date) DO UPDATE SET
                     price = EXCLUDED.price
-                "
-                )
-                .bind(&[
-                    node_id.clone().into(), fuel_price.fuel_type.to_string().into(),
-                    fuel_price.price.into(), fuel_price.price_change_effective_timestamp.format("%Y-%m-%d").to_string().into()
-                ])?;
-            statements.push(pfs_fuel_price_stmt);
+                WHERE fuel_prices.price != EXCLUDED.price"
+            ).bind(&[
+                station_prices.node_id.clone().into(),
+                fuel_price.fuel_type.to_string().into(),
+                wasm_bindgen::JsValue::from_f64(price_tenths as f64),
+                fuel_price.price_change_effective_timestamp.format("%Y-%m-%d").to_string().into(),
+            ])?;
+            statements.push(stmt);
         }
     }
 
-    db.batch(statements).await?;
+    if !statements.is_empty() {
+        db.batch(statements).await?;
+    }
 
-    Ok(TaskOutcome::Success)
+    Ok(TaskOutcome::Continue)
 }
 
 enum TaskOutcome {
-    Success,
-    NoMoreData,
+    /// Batch processed, continue with next batch in the same phase.
+    Continue,
+    /// This phase has no more data (got 404). Transition to next phase or finish.
+    PhaseComplete,
+}
+
+fn serialize_opening_hours(times: &apitypes::OpeningTimes) -> String {
+    let mut map = serde_json::Map::new();
+    for (day, hours) in [
+        ("monday", &times.usual_days.monday),
+        ("tuesday", &times.usual_days.tuesday),
+        ("wednesday", &times.usual_days.wednesday),
+        ("thursday", &times.usual_days.thursday),
+        ("friday", &times.usual_days.friday),
+        ("saturday", &times.usual_days.saturday),
+        ("sunday", &times.usual_days.sunday),
+    ] {
+        map.insert(day.to_string(), serde_json::json!({
+            "open": hours.open.to_string(),
+            "close": hours.close.to_string(),
+            "is_24_hours": hours.is_24_hours,
+        }));
+    }
+    map.insert("bank_holiday".to_string(), serde_json::json!({
+        "open": times.bank_holiday.open_time.to_string(),
+        "close": times.bank_holiday.close_time.to_string(),
+        "is_24_hours": times.bank_holiday.is_24_hours,
+    }));
+    serde_json::Value::Object(map).to_string()
 }
 
 async fn conclude_sync(env: &Env, last_effective_date: chrono::NaiveDate) -> Result<()> {
@@ -275,6 +277,23 @@ async fn conclude_sync(env: &Env, last_effective_date: chrono::NaiveDate) -> Res
         .await?;
     console_log!("Sync completed, updated last sync date in KV to {}", last_effective_date);
     Ok(())
+}
+
+/// Convert an upstream price (float pence-per-litre) to tenths of a penny.
+///
+/// Handles two issues:
+/// 1. Floating-point imprecision: 189.89999… → round(× 10) → 1899
+/// 2. Misentry detection: some stations enter the price in tenths of pence
+///    instead of pence (e.g. 1549 instead of 154.9).  Anything above 500p
+///    (£5/litre) is assumed to already be in tenths and is kept as-is.
+fn normalize_price(pence: f32) -> i64 {
+    let pence = pence as f64;
+    if pence > 500.0 {
+        // Already in tenths of pence — just round off any fractional noise
+        pence.round() as i64
+    } else {
+        (pence * 10.0).round() as i64
+    }
 }
 
 #[inline]
