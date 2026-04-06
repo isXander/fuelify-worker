@@ -276,6 +276,13 @@ async fn conclude_sync(env: &Env, last_effective_date: chrono::NaiveDate) -> Res
         .execute()
         .await?;
     console_log!("Sync completed, updated last sync date in KV to {}", last_effective_date);
+
+    // Check for price changes on watched stations and send push notifications.
+    if let Err(e) = crate::notifications::check_and_notify(env).await {
+        console_error!("Notification check failed: {:?}", e);
+        // Don't fail the sync for notification errors.
+    }
+
     Ok(())
 }
 

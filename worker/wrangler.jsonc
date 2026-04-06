@@ -63,6 +63,10 @@
     }
   ],
 
+  // Secrets (wrangler secret put):
+  //   GOVUK_CLIENT_ID, GOVUK_CLIENT_SECRET, PROXY_URL, PROXY_SECRET
+  //   FCM_SERVICE_ACCOUNT — Google service account JSON for FCM push notifications
+
   // For debugging.
   "observability": {
     "logs": {

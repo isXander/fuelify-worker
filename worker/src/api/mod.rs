@@ -15,6 +15,11 @@ async fn fetch(
     let app = Router::new()
         .post_async("/nearby", get_stations)
         .post_async("/price_history", get_price_history)
+        .post_async("/users/register", register_user)
+        .post_async("/devices/register", register_device)
+        .post_async("/watch/station", watch_station)
+        .delete_async("/watch/station", unwatch_station)
+        .get_async("/watches", list_watches)
         .on_async("/fuel-finder-proxy/*path", on_fuel_finder_proxy);
 
     app.run(req, env).await
@@ -230,6 +235,168 @@ async fn get_price_history(
 
     Response::from_json(&PriceHistoryResponse { samples })
 }
+
+// --- User & device registration ---
+
+async fn register_user(
+    _req: Request, ctx: RouteContext<()>
+) -> Result<Response> {
+    let db = ctx.d1("DB")?;
+
+    let user_id = uuid::Uuid::new_v4().to_string();
+
+    db.prepare("INSERT INTO users (id) VALUES (?)")
+        .bind(&[user_id.clone().into()])?
+        .run()
+        .await?;
+
+    Response::from_json(&RegisterUserResponse { user_id })
+}
+
+async fn register_device(
+    mut req: Request, ctx: RouteContext<()>
+) -> Result<Response> {
+    let db = ctx.d1("DB")?;
+
+    let body = match req.json::<RegisterDeviceRequest>().await {
+        Ok(b) => b,
+        Err(_) => {
+            return Response::builder()
+                .with_status(400)
+                .from_json(&ErrorResponse::new("Invalid request body"));
+        }
+    };
+
+    db.prepare(
+        "INSERT INTO devices (device_token, user_id) VALUES (?, ?)
+         ON CONFLICT (device_token) DO UPDATE SET
+             user_id = EXCLUDED.user_id,
+             last_seen_at = datetime('now')"
+    )
+        .bind(&[body.device_token.into(), body.user_id.into()])?
+        .run()
+        .await?;
+
+    Ok(Response::builder().with_status(200).empty())
+}
+
+// --- Station watches ---
+
+async fn watch_station(
+    mut req: Request, ctx: RouteContext<()>
+) -> Result<Response> {
+    let db = ctx.d1("DB")?;
+
+    let body = match req.json::<WatchStationRequest>().await {
+        Ok(b) => b,
+        Err(_) => {
+            return Response::builder()
+                .with_status(400)
+                .from_json(&ErrorResponse::new("Invalid request body"));
+        }
+    };
+
+    let fuel_type_str = body.fuel_type.as_db_str();
+
+    // Seed last_notified_price with current price to avoid immediate spurious notification.
+    let latest_price_row = db.prepare(
+        "SELECT price FROM fuel_prices
+         WHERE station_id = ? AND fuel_type = ?
+         ORDER BY effective_date DESC LIMIT 1"
+    )
+        .bind(&[body.station_id.clone().into(), fuel_type_str.into()])?
+        .first::<serde_json::Value>(None)
+        .await?;
+
+    let latest_price: wasm_bindgen::JsValue = match latest_price_row.and_then(|r| r.get("price").and_then(|v| v.as_i64())) {
+        Some(p) => wasm_bindgen::JsValue::from_f64(p as f64),
+        None => wasm_bindgen::JsValue::NULL,
+    };
+
+    db.prepare(
+        "INSERT INTO watched_stations (user_id, station_id, fuel_type, last_notified_price) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (user_id, station_id, fuel_type) DO NOTHING"
+    )
+        .bind(&[body.user_id.into(), body.station_id.into(), fuel_type_str.into(), latest_price])?
+        .run()
+        .await?;
+
+    Ok(Response::builder().with_status(200).empty())
+}
+
+async fn unwatch_station(
+    mut req: Request, ctx: RouteContext<()>
+) -> Result<Response> {
+    let db = ctx.d1("DB")?;
+
+    let body = match req.json::<WatchStationRequest>().await {
+        Ok(b) => b,
+        Err(_) => {
+            return Response::builder()
+                .with_status(400)
+                .from_json(&ErrorResponse::new("Invalid request body"));
+        }
+    };
+
+    let fuel_type_str = body.fuel_type.as_db_str();
+
+    db.prepare("DELETE FROM watched_stations WHERE user_id = ? AND station_id = ? AND fuel_type = ?")
+        .bind(&[body.user_id.into(), body.station_id.into(), fuel_type_str.into()])?
+        .run()
+        .await?;
+
+    Ok(Response::builder().with_status(200).empty())
+}
+
+async fn list_watches(
+    req: Request, ctx: RouteContext<()>
+) -> Result<Response> {
+    let db = ctx.d1("DB")?;
+
+    let url = req.url()?;
+    let user_id = match url.query_pairs().find(|(k, _)| k == "user_id").map(|(_, v)| v.to_string()) {
+        Some(id) => id,
+        None => {
+            return Response::builder()
+                .with_status(400)
+                .from_json(&ErrorResponse::new("Missing user_id query parameter"));
+        }
+    };
+
+    let rows = db.prepare(
+        "SELECT ws.station_id, ws.fuel_type, s.trading_name, s.brand_name
+         FROM watched_stations ws
+         JOIN stations s ON s.id = ws.station_id
+         WHERE ws.user_id = ?"
+    )
+        .bind(&[user_id.into()])?
+        .all()
+        .await?;
+
+    #[derive(Deserialize)]
+    struct Row {
+        station_id: String,
+        fuel_type: String,
+        trading_name: String,
+        brand_name: String,
+    }
+
+    let stations = rows.results::<Row>()?
+        .into_iter()
+        .filter_map(|r| {
+            Some(WatchedStation {
+                station_id: r.station_id,
+                trading_name: r.trading_name,
+                brand_name: r.brand_name,
+                fuel_type: FuelType::from_db_str(&r.fuel_type)?,
+            })
+        })
+        .collect();
+
+    Response::from_json(&ListWatchesResponse { stations })
+}
+
+// --- Error response ---
 
 #[derive(serde::Serialize)]
 struct ErrorResponse {

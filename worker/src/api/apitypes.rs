@@ -1,5 +1,42 @@
 use std::collections::HashMap;
 
+// --- User & device registration ---
+
+#[derive(serde::Serialize)]
+pub struct RegisterUserResponse {
+    pub user_id: String,
+}
+
+#[derive(serde::Deserialize)]
+pub struct RegisterDeviceRequest {
+    pub user_id: String,
+    pub device_token: String,
+}
+
+// --- Station watches ---
+
+#[derive(serde::Deserialize)]
+pub struct WatchStationRequest {
+    pub user_id: String,
+    pub station_id: String,
+    pub fuel_type: FuelType,
+}
+
+#[derive(serde::Serialize)]
+pub struct ListWatchesResponse {
+    pub stations: Vec<WatchedStation>,
+}
+
+#[derive(serde::Serialize)]
+pub struct WatchedStation {
+    pub station_id: String,
+    pub trading_name: String,
+    pub brand_name: String,
+    pub fuel_type: FuelType,
+}
+
+// --- Nearby stations ---
+
 #[derive(serde::Deserialize)]
 pub struct NearbyStationsRequest {
     pub fuel_type: FuelType,
