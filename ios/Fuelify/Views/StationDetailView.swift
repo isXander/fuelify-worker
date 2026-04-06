@@ -5,13 +5,14 @@ import SwiftData
 struct StationDetailView: View {
     let station: StationResponse
 
+    @Environment(PriceWatchService.self) private var priceWatchService
     @State private var stationMapItem: MKMapItem
-    
+
     init(station: StationResponse) {
         self.station = station
         self._stationMapItem = State(initialValue: stationToMapItem(station: station))
     }
-    
+
     private var normalisedAddress: String? {
         stationMapItem.addressRepresentations?.fullAddress(includingRegion: true, singleLine: true)
     }
@@ -99,23 +100,7 @@ struct StationDetailView: View {
                             .font(.headline)
 
                         ForEach(station.fuelPrices) { entry in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(entry.fuelType.displayName)
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                    Text("Last changed \(entry.relativeEffectiveDate ?? entry.effectiveDate)")
-                                        .font(.caption2)
-                                        .foregroundStyle(.tertiary)
-                                }
-                                Spacer()
-                                Text(String(format: "%.1fp", entry.price))
-                                    .font(.title3)
-                                    .fontWeight(.semibold)
-                                    .monospacedDigit()
-                            }
-                            .padding(12)
-                            .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 10))
+                            fuelPriceRow(entry: entry)
                         }
                     }
                 }
@@ -136,18 +121,46 @@ struct StationDetailView: View {
         }
         .navigationTitle(station.tradingName)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    
-                } label: {
-                    Label("Favourite", systemImage: "star")
-                }
-            }
-        }
         .task {
             await resolveAddress()
         }
+    }
+
+    private func fuelPriceRow(entry: FuelPriceEntry) -> some View {
+        let watching = priceWatchService.isWatching(stationId: station.id, fuelType: entry.fuelType)
+
+        return HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.fuelType.displayName)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Text("Last changed \(entry.relativeEffectiveDate ?? entry.effectiveDate)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+            Text(String(format: "%.1fp", entry.price))
+                .font(.title3)
+                .fontWeight(.semibold)
+                .monospacedDigit()
+
+            Button {
+                Task {
+                    if watching {
+                        await priceWatchService.unwatchStation(stationId: station.id, fuelType: entry.fuelType)
+                    } else {
+                        await priceWatchService.watchStation(stationId: station.id, fuelType: entry.fuelType)
+                    }
+                }
+            } label: {
+                Image(systemName: watching ? "bell.fill" : "bell")
+                    .foregroundStyle(watching ? .blue : .secondary)
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func resolveAddress() async {
@@ -156,4 +169,3 @@ struct StationDetailView: View {
         }
     }
 }
-

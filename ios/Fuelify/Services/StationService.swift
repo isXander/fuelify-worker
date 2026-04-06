@@ -9,7 +9,7 @@ class StationService {
     var isLoading = false
     var errorMessage: String?
 
-    private let baseURL = "http://localhost:8787"
+    private let baseURL = "https://fuelify.isxander.dev"
 
     func fetchStations(
         near coordinate: CLLocationCoordinate2D,
