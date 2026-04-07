@@ -14,7 +14,7 @@ pub async fn scheduled(_event: &ScheduledEvent, env: &Env, _ctx: &ScheduleContex
     let last_date = match kv.get("last_sync_date").text().await? {
         Some(date_str) => {
             console_log!("Found last sync date in KV: {}", date_str);
-            chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%dT%H:%M:%SZ").ok()
+            chrono::NaiveDateTime::parse_from_str(&date_str, "%Y-%m-%dT%H:%M:%SZ").ok()
         },
         None => {
             console_log!("No last sync date found in KV, starting full sync");
@@ -37,7 +37,7 @@ pub async fn scheduled(_event: &ScheduledEvent, env: &Env, _ctx: &ScheduleContex
 pub struct SyncTask {
     phase: SyncPhase,
     batch_number: u32,
-    incremental_from: Option<chrono::NaiveDate>,
+    incremental_from: Option<chrono::NaiveDateTime>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -83,7 +83,7 @@ pub async fn queue(message_batch: MessageBatch<SyncTask>, env: Env, _ctx: Contex
                     }
                     SyncPhase::FuelPrices => {
                         console_log!("FuelPrices phase complete, sync done");
-                        conclude_sync(&env, chrono::Utc::now().date_naive()).await?;
+                        conclude_sync(&env, chrono::Utc::now().naive_utc()).await?;
                     }
                 }
             }
@@ -287,7 +287,7 @@ fn serialize_opening_hours(times: &apitypes::OpeningTimes) -> String {
     serde_json::Value::Object(map).to_string()
 }
 
-async fn conclude_sync(env: &Env, last_effective_date: chrono::NaiveDate) -> Result<()> {
+async fn conclude_sync(env: &Env, last_effective_date: chrono::NaiveDateTime) -> Result<()> {
     let kv = env.kv("fuelify_ingest")?;
     kv.put("last_sync_date", last_effective_date.format("%Y-%m-%dT%H:%M:%SZ").to_string())?
         .execute()

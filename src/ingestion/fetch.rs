@@ -67,7 +67,7 @@ pub(crate) async fn fetch_pfs_information(
     env: &Env,
     token: &str,
     batch_number: u32,
-    incremental_from: Option<chrono::NaiveDate>,
+    incremental_from: Option<chrono::NaiveDateTime>,
 ) -> Result<PFSInformationResponse, FetchError> {
     let (proxy_endpoint, proxy_secret) = get_proxy_info(env);
 
@@ -115,7 +115,7 @@ pub(crate) async fn fetch_pfs_fuel_prices(
     env: &Env,
     token: &str,
     batch_number: u32,
-    incremental_from: Option<chrono::NaiveDate>,
+    incremental_from: Option<chrono::NaiveDateTime>,
 ) -> Result<PFSFuelPricesResponse, FetchError> {
     let (proxy_endpoint, proxy_secret) = get_proxy_info(env);
 
