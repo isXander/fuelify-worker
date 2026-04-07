@@ -9,7 +9,10 @@
 
   // Triggers ingestion of Fuel Finder data.
   "triggers": {
-    "crons": ["0 * * * *"] // every hour
+    "crons": [
+      "*/15 * * * *", // ingestion every 15 minutes
+      "0 0 * * *" // regional statistic generation every 24 hours,
+    ]
   },
 
   // The trigger above just submits batch no.1 to the queue.

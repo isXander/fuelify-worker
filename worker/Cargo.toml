@@ -15,5 +15,4 @@ strum = { version = "0.28", features = ["strum_macros"] }
 strum_macros = "0.28"
 urlencoding = "2.1"
 worker = { version = "0.7", features = ["queue", "http", "d1"] }
-uuid = { version = "1", features = ["v4", "js"] }
-jsonwebtoken = "9"
+h3o = { version = "0.9.4", features = ["std"] }

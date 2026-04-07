@@ -1,5 +1,7 @@
 use serde::{Deserialize, Deserializer, Serialize};
 
+pub type TenthsOfPence = i64;
+
 // SQLite stores booleans as 0/1 integers. D1's wasm binding deserialises them
 // as numbers, so we need a helper to convert them when reading from the DB.
 fn int_as_bool<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
@@ -43,6 +45,31 @@ pub struct FuelPrice {
     pub station_id: String,
     pub fuel_type: String,
     /// Price in tenths of a penny per litre (e.g. 146.9p = 1469).
-    pub price: i64,
+    pub price: TenthsOfPence,
     pub effective_date: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum StationBrand {
+    Esso,
+    BP,
+    Shell,
+    Tesco,
+    Texaco,
+    Morrisons,
+    ASDA,
+    SAINSBURYS,
+    JET,
+    Gulf,
+    EGOnTheMove,
+    Murco,
+    ASDAExpress,
+    Valero,
+    Unbranded,
+    Maxol,
+    WelcomeBreak,
+    HarvestEnergy,
+    Essar,
+    CostcoWholesale,
+    Other(String),
 }

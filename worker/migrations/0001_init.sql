@@ -19,17 +19,21 @@ CREATE TABLE stations (
     postcode          TEXT    NOT NULL DEFAULT '',
     latitude          REAL    NOT NULL DEFAULT 0,
     longitude         REAL    NOT NULL DEFAULT 0,
+    h3_index_r6       TEXT    NOT NULL,
+    h3_index_r3       TEXT    NOT NULL,
     amenities         TEXT    NOT NULL DEFAULT '[]',
     opening_hours     TEXT    NOT NULL DEFAULT '{}'
 );
 
-CREATE INDEX stations_geo_idx ON stations (latitude, longitude);
+CREATE INDEX stations_h3_r6_idx ON stations (h3_index_r6);
+CREATE INDEX stations_h3_r3_idx ON stations (h3_index_r3);
 
 CREATE TABLE fuel_prices (
     station_id     TEXT    NOT NULL,
     fuel_type      TEXT    NOT NULL,
     price          INTEGER NOT NULL,
-    effective_date DATE    NOT NULL,
+    -- SQLite stores temporal values as TEXT; keep UTC ISO-8601 for lexical ordering.
+    effective_date TEXT    NOT NULL,
     PRIMARY KEY (station_id, fuel_type, effective_date)
 );
 

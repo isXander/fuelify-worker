@@ -1,49 +1,12 @@
 use std::collections::HashMap;
 
-// --- User & device registration ---
-
-#[derive(serde::Serialize)]
-pub struct RegisterUserResponse {
-    pub user_id: String,
-}
-
-#[derive(serde::Deserialize)]
-pub struct RegisterDeviceRequest {
-    pub user_id: String,
-    pub device_token: String,
-}
-
-// --- Station watches ---
-
-#[derive(serde::Deserialize)]
-pub struct WatchStationRequest {
-    pub user_id: String,
-    pub station_id: String,
-    pub fuel_type: FuelType,
-}
-
-#[derive(serde::Serialize)]
-pub struct ListWatchesResponse {
-    pub stations: Vec<WatchedStation>,
-}
-
-#[derive(serde::Serialize)]
-pub struct WatchedStation {
-    pub station_id: String,
-    pub trading_name: String,
-    pub brand_name: String,
-    pub fuel_type: FuelType,
-}
-
 // --- Nearby stations ---
 
 #[derive(serde::Deserialize)]
 pub struct NearbyStationsRequest {
     pub fuel_type: FuelType,
-    pub origin_lat: f64,
-    pub origin_lon: f64,
-    pub span_lat: f64,
-    pub span_lon: f64,
+    pub origin: String,
+    pub k_rings: u32,
 }
 
 #[derive(serde::Serialize)]
@@ -63,12 +26,9 @@ pub struct PriceHistoryResponse {
     pub samples: Vec<FuelPriceSample>,
 }
 
-
 #[derive(serde::Serialize)]
 pub struct Station {
     pub info: StationInfo,
-    pub location: StationLocation,
-    pub amenities: Vec<Amenity>,
     /// All fuel types available at the station, along with their latest price sample.
     pub latest_fuel_prices: HashMap<FuelType, FuelPriceSample>,
 }
@@ -76,27 +36,52 @@ pub struct Station {
 #[derive(serde::Serialize)]
 pub struct StationInfo {
     pub station_id: String,
+    pub phone_number: String,
     pub trading_name: String,
     pub brand_name: String,
+    pub trading_as_brand: bool,
+    pub temporary_closure: bool,
+    pub permanent_closure: bool,
     pub motorway: bool,
     pub supermarket: bool,
-}
-
-#[derive(serde::Serialize)]
-pub struct StationLocation {
-    pub latitude: f64,
-    pub longitude: f64,
     pub address_line_1: String,
     pub address_line_2: String,
     pub city: String,
     pub county: String,
+    pub country: String,
     pub postcode: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub h3_index_r6: String,
+    pub h3_index_r3: String,
+    pub amenities: Vec<Amenity>,
+    pub opening_hours: OpeningHours,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct DaySchedule {
+    pub open: String,
+    pub close: String,
+    pub is_24_hours: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct OpeningHours {
+    pub monday: DaySchedule,
+    pub tuesday: DaySchedule,
+    pub wednesday: DaySchedule,
+    pub thursday: DaySchedule,
+    pub friday: DaySchedule,
+    pub saturday: DaySchedule,
+    pub sunday: DaySchedule,
+    pub bank_holiday: DaySchedule,
 }
 
 #[derive(serde::Serialize)]
 pub struct FuelPriceSample {
     /// Price in pence per litre.
     pub price: f64,
+    /// ISO 8601 UTC timestamp, e.g. "2026-04-07T13:45:00Z".
     pub effective_date: String,
 }
 
@@ -173,5 +158,4 @@ pub enum Amenity {
     WaterFilling,
     LpgPumps,
 }
-
 

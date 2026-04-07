@@ -5,16 +5,16 @@ use serde::{Deserialize, Serialize};
 use worker::*;
 use fetch::*;
 use wasm_bindgen::JsValue;
+use crate::models::StationBrand;
 
-#[event(scheduled)]
-pub async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) -> worker::Result<()> {
+pub async fn scheduled(_event: &ScheduledEvent, env: &Env, _ctx: &ScheduleContext) -> worker::Result<()> {
     let sync_queue = env.queue("sync-queue")?;
 
     let kv = env.kv("fuelify_ingest")?;
     let last_date = match kv.get("last_sync_date").text().await? {
         Some(date_str) => {
             console_log!("Found last sync date in KV: {}", date_str);
-            chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%d").ok()
+            chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%dT%H:%M:%SZ").ok()
         },
         None => {
             console_log!("No last sync date found in KV, starting full sync");
@@ -133,6 +133,18 @@ async fn do_information_batch(env: &Env, token: &str, task: &SyncTask) -> Result
     let mut statements = Vec::new();
 
     for station_info in info_batch {
+        let Ok(coord) = h3o::LatLng::new(
+            station_info.location.latitude,
+            station_info.location.longitude
+        ) else {
+            return Err(Error::RustError(format!(
+                "Invalid coordinates for station {}: lat {}, lng {}",
+                station_info.node_id, station_info.location.latitude, station_info.location.longitude
+            )));
+        };
+        let cell_r6 = coord.to_cell(h3o::Resolution::Six);
+        let cell_r3 = coord.to_cell(h3o::Resolution::Three);
+
         let amenities_json = serde_json::to_string(
             &station_info.amenities.iter().map(|a| a.to_string()).collect::<Vec<_>>()
         ).unwrap_or_else(|_| "[]".to_string());
@@ -144,10 +156,10 @@ async fn do_information_batch(env: &Env, token: &str, task: &SyncTask) -> Result
                 id, phone_number, trading_name, brand_name, trading_as_brand,
                 temporary_closure, permanent_closure, motorway, supermarket,
                 address_line_1, address_line_2, city, country, county, postcode,
-                latitude, longitude, amenities, opening_hours
+                latitude, longitude, amenities, opening_hours, h3_index_r6, h3_index_r3
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
-                ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19
+                ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21
             )
             ON CONFLICT (id) DO UPDATE SET
                 phone_number = EXCLUDED.phone_number,
@@ -167,27 +179,32 @@ async fn do_information_batch(env: &Env, token: &str, task: &SyncTask) -> Result
                 latitude = EXCLUDED.latitude,
                 longitude = EXCLUDED.longitude,
                 amenities = EXCLUDED.amenities,
-                opening_hours = EXCLUDED.opening_hours"
+                opening_hours = EXCLUDED.opening_hours,
+                h3_index_r6 = EXCLUDED.h3_index_r6,
+                h3_index_r3 = EXCLUDED.h3_index_r3
+                "
         ).bind(&[
             station_info.node_id.into(),
             nullable_text(station_info.public_phone_number),
-            station_info.trading_name.into(),
-            station_info.brand_name.into(),
+            station_info.trading_name.trim().to_uppercase().into(),
+            station_info.brand_name.trim().to_uppercase().into(),
             station_info.is_same_trading_and_brand_name.into(),
             station_info.temporary_closure.into(),
             station_info.permanent_closure.into(),
             station_info.is_motorway_service_station.into(),
             station_info.is_supermarket_service_station.into(),
-            station_info.location.address_line_1.into(),
-            station_info.location.address_line_2.into(),
-            station_info.location.city.into(),
-            station_info.location.country.into(),
-            station_info.location.county.into(),
-            station_info.location.postcode.into(),
+            station_info.location.address_line_1.trim().to_uppercase().into(),
+            station_info.location.address_line_2.trim().to_uppercase().into(),
+            station_info.location.city.trim().to_uppercase().into(),
+            station_info.location.country.trim().to_uppercase().into(),
+            station_info.location.county.trim().to_uppercase().into(),
+            station_info.location.postcode.trim().to_uppercase().into(),
             station_info.location.latitude.into(),
             station_info.location.longitude.into(),
             amenities_json.into(),
             opening_hours_json.into(),
+            cell_r6.to_string().into(),
+            cell_r3.to_string().into(),
         ])?;
         statements.push(stmt);
     }
@@ -225,7 +242,7 @@ async fn do_fuel_prices_batch(env: &Env, token: &str, task: &SyncTask) -> Result
                 station_prices.node_id.clone().into(),
                 fuel_price.fuel_type.to_string().into(),
                 wasm_bindgen::JsValue::from_f64(price_tenths as f64),
-                fuel_price.price_change_effective_timestamp.format("%Y-%m-%d").to_string().into(),
+                fuel_price.price_change_effective_timestamp.format("%Y-%m-%dT%H:%M:%SZ").to_string().into(),
             ])?;
             statements.push(stmt);
         }
@@ -272,16 +289,11 @@ fn serialize_opening_hours(times: &apitypes::OpeningTimes) -> String {
 
 async fn conclude_sync(env: &Env, last_effective_date: chrono::NaiveDate) -> Result<()> {
     let kv = env.kv("fuelify_ingest")?;
-    kv.put("last_sync_date", last_effective_date.format("%Y-%m-%d").to_string())?
+    kv.put("last_sync_date", last_effective_date.format("%Y-%m-%dT%H:%M:%SZ").to_string())?
         .execute()
         .await?;
-    console_log!("Sync completed, updated last sync date in KV to {}", last_effective_date);
 
-    // Check for price changes on watched stations and send push notifications.
-    if let Err(e) = crate::notifications::check_and_notify(env).await {
-        console_error!("Notification check failed: {:?}", e);
-        // Don't fail the sync for notification errors.
-    }
+    console_log!("Sync completed, updated last sync date in KV to {}", last_effective_date);
 
     Ok(())
 }
@@ -291,11 +303,15 @@ async fn conclude_sync(env: &Env, last_effective_date: chrono::NaiveDate) -> Res
 /// Handles two issues:
 /// 1. Floating-point imprecision: 189.89999… → round(× 10) → 1899
 /// 2. Misentry detection: some stations enter the price in tenths of pence
-///    instead of pence (e.g. 1549 instead of 154.9).  Anything above 500p
-///    (£5/litre) is assumed to already be in tenths and is kept as-is.
+///    instead of pence (e.g. 1549 instead of 154.9). Some in £.
+///    Anything above 500p (£5/litre) is assumed to already be in tenths and is kept as-is.
 fn normalize_price(pence: f32) -> i64 {
     let pence = pence as f64;
-    if pence > 500.0 {
+
+    if pence < 5.0 {
+        // In £, not pence
+        (pence * 100.0 * 10.0).round() as i64
+    } else if pence > 500.0 {
         // Already in tenths of pence — just round off any fractional noise
         pence.round() as i64
     } else {
@@ -309,4 +325,43 @@ fn nullable_text(value: Option<String>) -> JsValue {
         Some(v) => v.into(),
         None => JsValue::NULL,
     }
+}
+
+pub fn parse_station_brand(input: &str) -> StationBrand {
+    let brand = input.trim().to_uppercase();
+
+    if brand == "" {
+        return StationBrand::Unbranded
+    }
+
+    const MATCHES: &[(&str, fn() -> StationBrand)] = &[
+        ("HARVEST ENERGY", || StationBrand::HarvestEnergy),
+        ("WELCOME BREAK", || StationBrand::WelcomeBreak),
+        ("EG ON THE MOVE", || StationBrand::EGOnTheMove),
+        ("ASDA EXPRESS", || StationBrand::ASDAExpress),
+        ("COSTCO", || StationBrand::CostcoWholesale),
+        ("TESCO", || StationBrand::Tesco),
+        ("MORRISONS", || StationBrand::Morrisons),
+        ("SAINSBURY", || StationBrand::SAINSBURYS),
+        ("ASDA", || StationBrand::ASDA),
+        ("ESSO", || StationBrand::Esso),
+        ("SHELL", || StationBrand::Shell),
+        ("BP", || StationBrand::BP),
+        ("TEXACO", || StationBrand::Texaco),
+        ("JET", || StationBrand::JET),
+        ("GULF", || StationBrand::Gulf),
+        ("MURCO", || StationBrand::Murco),
+        ("VALERO", || StationBrand::Valero),
+        ("MAXOL", || StationBrand::Maxol),
+        ("ESSAR", || StationBrand::Essar),
+        ("NONE", || StationBrand::Unbranded),
+    ];
+
+    for (needle, constructor) in MATCHES {
+        if brand.contains(needle) {
+            return constructor();
+        }
+    }
+
+    StationBrand::Other(brand)
 }

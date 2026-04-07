@@ -52,8 +52,8 @@ pub struct Location {
     pub county: String,
     #[serde(deserialize_with = "null_to_empty_string")]
     pub postcode: String,
-    pub latitude: f32,
-    pub longitude: f32,
+    pub latitude: f64,
+    pub longitude: f64,
 }
 
 // TODO: investigate if there are more amenities
