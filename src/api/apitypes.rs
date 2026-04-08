@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-// --- Nearby stations ---
-
 #[derive(serde::Deserialize)]
 pub struct NearbyStationsRequest {
     pub fuel_type: FuelType,
@@ -9,8 +7,13 @@ pub struct NearbyStationsRequest {
     pub k_rings: u32,
 }
 
+#[derive(serde::Deserialize)]
+pub struct GetStationsRequest {
+    pub station_ids: Vec<String>,
+}
+
 #[derive(serde::Serialize)]
-pub struct NearbyStationsResponse {
+pub struct StationsListResponse {
     pub results: Vec<Station>,
 }
 
