@@ -1,5 +1,6 @@
 mod apitypes;
 mod fetch;
+mod lock;
 
 use serde::{Deserialize, Serialize};
 use worker::*;
