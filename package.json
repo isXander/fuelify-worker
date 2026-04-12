@@ -1,0 +1,24 @@
+{
+	"name": "fuelify-worker-ts",
+	"version": "0.0.0",
+	"private": true,
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"start": "wrangler dev",
+		"test": "vitest",
+		"cf-typegen": "wrangler types",
+		"generate-schema": "drizzle-kit introspect"
+	},
+	"devDependencies": {
+		"@cloudflare/vitest-pool-workers": "^0.12.4",
+		"@types/node": "^25.6.0",
+		"typescript": "^5.5.2",
+		"vitest": "~3.2.0",
+		"wrangler": "^4.81.1"
+	},
+	"dependencies": {
+		"h3-js": "^4.4.0",
+		"hono": "^4.12.12"
+	}
+}
