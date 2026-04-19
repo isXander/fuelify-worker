@@ -26,8 +26,12 @@ type StepParams = {
 
 export class OrchestratorWorkflow extends WorkflowEntrypoint<Env, {}> {
 	async run(event: WorkflowEvent<{}>, step: WorkflowStep) {
-		// Snapshot upper bound before any data is fetched so records published mid-run are
-		// still picked up by the next sync rather than silently skipped.
+		// Snapshot at sync-start, not sync-end, for the next run's `from` filter. The PFS
+		// API takes no upper-bound timestamp, so batches fetched later in the run can
+		// contain records with effective dates right up to each batch's fetch time. Using
+		// sync-end would lose any record that PFS publishes mid-run onto a page we've
+		// already paged past; sync-start guarantees the next sync re-examines everything
+		// from this moment on (duplicates are handled by the dedupe key).
 		const syncStartTimestamp = await step.do('snapshot sync start', async () => {
 			return new Date().toISOString();
 		});
