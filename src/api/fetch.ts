@@ -6,6 +6,7 @@ import {
 	Station, StationsListResponse, PriceHistoryResponse,
 	NearbyStationsRequest, GetStationsRequest, PriceHistoryRequest,
 	historyIntervalDays, fuelTypeFromDb, fuelTypeToDb,
+	isFuelType, isHistoryInterval,
 } from './types';
 import { getRegionStatistics } from '../statistics/statistics';
 
@@ -193,6 +194,16 @@ async function getPriceHistory(c: Context<AppContext>): Promise<Response> {
 		body = await c.req.json<PriceHistoryRequest>();
 	} catch {
 		return errorResponse(400, 'Invalid request body');
+	}
+
+	if (typeof body.station_id !== 'string' || body.station_id.length === 0) {
+		return errorResponse(400, 'station_id must be a non-empty string');
+	}
+	if (!isFuelType(body.fuel_type)) {
+		return errorResponse(400, 'fuel_type must be a valid fuel type');
+	}
+	if (!isHistoryInterval(body.interval)) {
+		return errorResponse(400, 'interval must be a valid history interval');
 	}
 
 	const days = historyIntervalDays(body.interval);

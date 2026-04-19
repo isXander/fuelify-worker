@@ -7,12 +7,19 @@ import {DaySchedule, OpeningHours} from '../api/types';
 type StepParams = {
 	batchNumber: number,
 	incrementalFrom: string | null,
+	syncStartTimestamp: string,
 	parentInstanceId: string,
 	parentType: 'orchestrator' | 'info' | 'prices',
 }
 
 export class OrchestratorWorkflow extends WorkflowEntrypoint<Env, {}> {
 	async run(event: WorkflowEvent<{}>, step: WorkflowStep) {
+		// Snapshot upper bound before any data is fetched so records published mid-run are
+		// still picked up by the next sync rather than silently skipped.
+		const syncStartTimestamp = await step.do('snapshot sync start', async () => {
+			return new Date().toISOString();
+		});
+
 		await step.do('dispatch information stage', async () => {
 			const lastSyncDate = await env.fuelify_ingest.get('last_sync_date');
 
@@ -20,6 +27,7 @@ export class OrchestratorWorkflow extends WorkflowEntrypoint<Env, {}> {
 				params: {
 					batchNumber: 1,
 					incrementalFrom: lastSyncDate,
+					syncStartTimestamp,
 					parentInstanceId: event.instanceId,
 					parentType: 'orchestrator',
 				}
@@ -82,6 +90,7 @@ export class InformationStepWorkflow extends StepWorkflow {
 					params: {
 						batchNumber: 1,
 						incrementalFrom: event.payload.incrementalFrom,
+						syncStartTimestamp: event.payload.syncStartTimestamp,
 						parentInstanceId: event.instanceId,
 						parentType: 'info',
 					}
@@ -194,11 +203,14 @@ export class InformationStepWorkflow extends StepWorkflow {
 				params: {
 					batchNumber: event.payload.batchNumber + 1,
 					incrementalFrom: event.payload.incrementalFrom,
+					syncStartTimestamp: event.payload.syncStartTimestamp,
 					parentInstanceId: event.instanceId,
 					parentType: 'info',
 				}
 			});
 		});
+
+		await waitForChildren(step);
 	}
 }
 
@@ -215,10 +227,10 @@ export class FuelPricesStepWorkflow extends StepWorkflow {
 
 		if (pricesData === 'no_more_batches') {
 			await step.do('conclude sync', async () => {
-				const now = new Date().toISOString();
-				await env.fuelify_ingest.put('last_sync_date', now);
+				const syncStart = event.payload.syncStartTimestamp;
+				await env.fuelify_ingest.put('last_sync_date', syncStart);
 
-				console.log({ 'type': 'sync_complete', 'timestamp': now });
+				console.log({ 'type': 'sync_complete', 'timestamp': syncStart });
 			});
 
 			return;
@@ -259,6 +271,7 @@ export class FuelPricesStepWorkflow extends StepWorkflow {
 				params: {
 					batchNumber: event.payload.batchNumber + 1,
 					incrementalFrom: event.payload.incrementalFrom,
+					syncStartTimestamp: event.payload.syncStartTimestamp,
 					parentInstanceId: event.instanceId,
 					parentType: 'prices',
 				}

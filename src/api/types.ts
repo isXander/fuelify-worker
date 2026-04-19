@@ -139,6 +139,20 @@ export function historyIntervalDays(interval: HistoryInterval): number {
 	}
 }
 
+const HISTORY_INTERVALS: readonly HistoryInterval[] = [
+	'last_7_days', 'last_30_days', 'last_90_days', 'last_180_days', 'last_365_days',
+];
+
+export function isHistoryInterval(value: unknown): value is HistoryInterval {
+	return typeof value === 'string' && (HISTORY_INTERVALS as readonly string[]).includes(value);
+}
+
+const FUEL_TYPES: readonly FuelType[] = ['E10', 'E5', 'HVO', 'B10', 'B7STANDARD', 'B7PREMIUM'];
+
+export function isFuelType(value: unknown): value is FuelType {
+	return typeof value === 'string' && (FUEL_TYPES as readonly string[]).includes(value);
+}
+
 export type FuelType = 'E10' | 'E5' | 'B7STANDARD' | 'B7PREMIUM' | 'B10' | 'HVO';
 
 export type Amenity =
