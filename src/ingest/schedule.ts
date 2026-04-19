@@ -9,6 +9,7 @@ export async function onIngestSchedule() {
 	}
 
 	if (workflow) {
+		console.log({ "type": "workflow_exists", "workflow": workflow });
 		const status = await workflow.status();
 		const ongoingStatuses = ['running', 'queued', 'waiting', 'waitingForPause', 'paused'];
 		const restartableStatuses = ['complete', 'errored', 'terminated'];
@@ -32,4 +33,10 @@ export async function onIngestSchedule() {
 			params: {}
 		});
 	}
+}
+
+export async function onIngestScheduleTemp() {
+	await env.INGESTION_ORCHESTRATOR.create({
+		params: {}
+	});
 }
