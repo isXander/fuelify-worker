@@ -101,15 +101,17 @@ export type HistoryInterval =
 	| 'last_180_days'
 	| 'last_365_days';
 
+// DB uses the Rust strum Display output (variant names) for backwards compatibility
+// with rows written by the original Rust ingest worker.
 export function fuelTypeFromDb(s: string): FuelType | null {
 	switch (s) {
-		case 'E10':         return 'E10';
-		case 'E5':          return 'E5';
-		case 'HVO':         return 'HVO';
-		case 'B10':         return 'B10';
-		case 'B7_STANDARD': return 'B7STANDARD';
-		case 'B7_PREMIUM':  return 'B7PREMIUM';
-		default:            return null;
+		case 'E10':        return 'E10';
+		case 'E5':         return 'E5';
+		case 'HVO':        return 'HVO';
+		case 'B10':        return 'B10';
+		case 'B7Standard': return 'B7STANDARD';
+		case 'B7Premium':  return 'B7PREMIUM';
+		default:           return null;
 	}
 }
 
@@ -119,8 +121,8 @@ export function fuelTypeToDb(ft: FuelType): string {
 		case 'E5':         return 'E5';
 		case 'HVO':        return 'HVO';
 		case 'B10':        return 'B10';
-		case 'B7STANDARD': return 'B7_STANDARD';
-		case 'B7PREMIUM':  return 'B7_PREMIUM';
+		case 'B7STANDARD': return 'B7Standard';
+		case 'B7PREMIUM':  return 'B7Premium';
 	}
 }
 
@@ -137,6 +139,20 @@ export function historyIntervalDays(interval: HistoryInterval): number {
 		case 'last_365_days':
 			return 365;
 	}
+}
+
+const HISTORY_INTERVALS: readonly HistoryInterval[] = [
+	'last_7_days', 'last_30_days', 'last_90_days', 'last_180_days', 'last_365_days',
+];
+
+export function isHistoryInterval(value: unknown): value is HistoryInterval {
+	return typeof value === 'string' && (HISTORY_INTERVALS as readonly string[]).includes(value);
+}
+
+const FUEL_TYPES: readonly FuelType[] = ['E10', 'E5', 'HVO', 'B10', 'B7STANDARD', 'B7PREMIUM'];
+
+export function isFuelType(value: unknown): value is FuelType {
+	return typeof value === 'string' && (FUEL_TYPES as readonly string[]).includes(value);
 }
 
 export type FuelType = 'E10' | 'E5' | 'B7STANDARD' | 'B7PREMIUM' | 'B10' | 'HVO';

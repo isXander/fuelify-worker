@@ -1,18 +1,41 @@
 import {env, WorkflowEntrypoint, WorkflowEvent, WorkflowStep} from 'cloudflare:workers';
 import {fetchPFSBearerToken, fetchPFSFuelPrices, fetchPFSInformation} from '../fuelfinder/fetch';
 import {cellToParent, latLngToCell} from 'h3-js';
-import {DayHours} from '../fuelfinder/types';
+import {DayHours, FuelType as PFSFuelType} from '../fuelfinder/types';
 import {DaySchedule, OpeningHours} from '../api/types';
+
+// Convert the PFS API's fuel-type spelling to the DB's (matches the Rust ingest output).
+function pfsFuelTypeToDb(ft: PFSFuelType): string {
+	switch (ft) {
+		case 'E5':          return 'E5';
+		case 'E10':         return 'E10';
+		case 'HVO':         return 'HVO';
+		case 'B10':         return 'B10';
+		case 'B7_STANDARD': return 'B7Standard';
+		case 'B7_PREMIUM':  return 'B7Premium';
+	}
+}
 
 type StepParams = {
 	batchNumber: number,
 	incrementalFrom: string | null,
+	syncStartTimestamp: string,
 	parentInstanceId: string,
 	parentType: 'orchestrator' | 'info' | 'prices',
 }
 
 export class OrchestratorWorkflow extends WorkflowEntrypoint<Env, {}> {
 	async run(event: WorkflowEvent<{}>, step: WorkflowStep) {
+		// Snapshot at sync-start, not sync-end, for the next run's `from` filter. The PFS
+		// API takes no upper-bound timestamp, so batches fetched later in the run can
+		// contain records with effective dates right up to each batch's fetch time. Using
+		// sync-end would lose any record that PFS publishes mid-run onto a page we've
+		// already paged past; sync-start guarantees the next sync re-examines everything
+		// from this moment on (duplicates are handled by the dedupe key).
+		const syncStartTimestamp = await step.do('snapshot sync start', async () => {
+			return new Date().toISOString();
+		});
+
 		await step.do('dispatch information stage', async () => {
 			const lastSyncDate = await env.fuelify_ingest.get('last_sync_date');
 
@@ -20,6 +43,7 @@ export class OrchestratorWorkflow extends WorkflowEntrypoint<Env, {}> {
 				params: {
 					batchNumber: 1,
 					incrementalFrom: lastSyncDate,
+					syncStartTimestamp,
 					parentInstanceId: event.instanceId,
 					parentType: 'orchestrator',
 				}
@@ -82,6 +106,7 @@ export class InformationStepWorkflow extends StepWorkflow {
 					params: {
 						batchNumber: 1,
 						incrementalFrom: event.payload.incrementalFrom,
+						syncStartTimestamp: event.payload.syncStartTimestamp,
 						parentInstanceId: event.instanceId,
 						parentType: 'info',
 					}
@@ -194,11 +219,14 @@ export class InformationStepWorkflow extends StepWorkflow {
 				params: {
 					batchNumber: event.payload.batchNumber + 1,
 					incrementalFrom: event.payload.incrementalFrom,
+					syncStartTimestamp: event.payload.syncStartTimestamp,
 					parentInstanceId: event.instanceId,
 					parentType: 'info',
 				}
 			});
 		});
+
+		await waitForChildren(step);
 	}
 }
 
@@ -215,10 +243,10 @@ export class FuelPricesStepWorkflow extends StepWorkflow {
 
 		if (pricesData === 'no_more_batches') {
 			await step.do('conclude sync', async () => {
-				const now = new Date().toISOString();
-				await env.fuelify_ingest.put('last_sync_date', now);
+				const syncStart = event.payload.syncStartTimestamp;
+				await env.fuelify_ingest.put('last_sync_date', syncStart);
 
-				console.log({ 'type': 'sync_complete', 'timestamp': now });
+				console.log({ 'type': 'sync_complete', 'timestamp': syncStart });
 			});
 
 			return;
@@ -241,7 +269,7 @@ export class FuelPricesStepWorkflow extends StepWorkflow {
 					statements.push(
 						statement.bind(
 							station.node_id,
-							fuelPrice.fuel_type,
+							pfsFuelTypeToDb(fuelPrice.fuel_type),
 							priceTenths,
 							fuelPrice.price_change_effective_timestamp
 						)
@@ -259,6 +287,7 @@ export class FuelPricesStepWorkflow extends StepWorkflow {
 				params: {
 					batchNumber: event.payload.batchNumber + 1,
 					incrementalFrom: event.payload.incrementalFrom,
+					syncStartTimestamp: event.payload.syncStartTimestamp,
 					parentInstanceId: event.instanceId,
 					parentType: 'prices',
 				}

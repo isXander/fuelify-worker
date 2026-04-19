@@ -9,7 +9,8 @@ export interface PFSTokenResponse {
 
 export interface PFSFetchRequestQueryParams {
 	'batch-number': number;
-	'effective-start-timestamp'?: string; // YYYY-MM-DD
+	/** ISO 8601 UTC timestamp, e.g. "2024-06-01T12:00:00Z". */
+	'effective-start-timestamp'?: string;
 }
 
 export interface PFSInformation {
