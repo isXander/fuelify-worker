@@ -87,7 +87,7 @@ describe("POST /nearby", () => {
 		});
 		await insertPrice({
 			station_id: "S1",
-			fuel_type: "B7_STANDARD",
+			fuel_type: "B7Standard",
 			price: 1550,
 			effective_date: "2026-04-12T12:00:00Z",
 		});
@@ -119,7 +119,7 @@ describe("POST /nearby", () => {
 		await insertStation({ id: "S1" });
 		await insertPrice({
 			station_id: "S1",
-			fuel_type: "B7_STANDARD",
+			fuel_type: "B7Standard",
 			price: 1500,
 			effective_date: "2026-04-15T12:00:00Z",
 		});
@@ -210,7 +210,7 @@ describe("POST /stations", () => {
 		});
 		await insertPrice({
 			station_id: "S2",
-			fuel_type: "B7_STANDARD",
+			fuel_type: "B7Standard",
 			price: 1500,
 			effective_date: "2026-04-15T00:00:00Z",
 		});
@@ -306,7 +306,7 @@ describe("POST /price_history", () => {
 		const date = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 		await insertPrice({
 			station_id: "S1",
-			fuel_type: "B7_STANDARD",
+			fuel_type: "B7Standard",
 			price: 1500,
 			effective_date: date,
 		});

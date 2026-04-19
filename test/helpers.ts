@@ -90,7 +90,7 @@ export async function insertStation(s: SeedStation): Promise<void> {
 
 export interface SeedPrice {
 	station_id: string;
-	/** Database fuel type (e.g. "B7_STANDARD"). */
+	/** Database fuel type (e.g. "B7Standard"). */
 	fuel_type: string;
 	/** Price in tenths of pence. */
 	price: number;

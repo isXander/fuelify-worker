@@ -13,8 +13,8 @@ describe("fuelTypeFromDb", () => {
 		["E5", "E5"],
 		["HVO", "HVO"],
 		["B10", "B10"],
-		["B7_STANDARD", "B7STANDARD"],
-		["B7_PREMIUM", "B7PREMIUM"],
+		["B7Standard", "B7STANDARD"],
+		["B7Premium", "B7PREMIUM"],
 	];
 
 	it.each(cases)("maps %s to %s", (input, expected) => {
@@ -34,8 +34,8 @@ describe("fuelTypeToDb", () => {
 		["E5", "E5"],
 		["HVO", "HVO"],
 		["B10", "B10"],
-		["B7STANDARD", "B7_STANDARD"],
-		["B7PREMIUM", "B7_PREMIUM"],
+		["B7STANDARD", "B7Standard"],
+		["B7PREMIUM", "B7Premium"],
 	];
 
 	it.each(cases)("maps %s to %s", (input, expected) => {
