@@ -180,6 +180,14 @@ async function getStationsById(c: Context<AppContext>): Promise<Response> {
 		return errorResponse(400, 'Invalid request body');
 	}
 
+	if (!Array.isArray(body.station_ids) || body.station_ids.length === 0) {
+		return errorResponse(400, 'station_ids must be a non-empty array');
+	}
+
+	if (body.station_ids.some((id) => typeof id !== 'string' || id.length === 0)) {
+		return errorResponse(400, 'station_ids must be an array of non-empty strings');
+	}
+
 	const { results } = await c.env.DB.prepare(`
 		SELECT s.id AS station_id, s.phone_number, s.trading_name, s.brand_name,
 		       s.trading_as_brand, s.temporary_closure, s.permanent_closure, s.motorway, s.supermarket,

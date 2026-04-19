@@ -168,3 +168,6 @@ dist
 
 # Jetbrains
 .idea/
+
+# npm lock file (project uses pnpm)
+package-lock.json

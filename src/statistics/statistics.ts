@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers';
 import { Context } from 'hono';
 import { isValidCell, getResolution } from 'h3-js';
 import {
-	FuelType, fuelTypeToDb,
+	FuelType, fuelTypeToDb, isFuelType,
 	RegionStatisticsRequest, RegionStatisticsResponse,
 } from '../api/types';
 
@@ -151,6 +151,10 @@ export async function getRegionStatistics(c: Context<AppContext>): Promise<Respo
 		if (!isValidCell(cell) || getResolution(cell) !== 6) {
 			return Response.json({ success: false, message: 'h3_cells must all be valid H3 cells at resolution 6' }, { status: 400 });
 		}
+	}
+
+	if (!isFuelType(body.fuel_type)) {
+		return Response.json({ success: false, message: 'fuel_type must be a valid fuel type' }, { status: 400 });
 	}
 
 	const stats = await computeRegionStatistics(body.h3_cells, body.fuel_type, 6);
