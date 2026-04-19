@@ -13,6 +13,7 @@
 import { onApiFetch } from './api/fetch';
 import { onIngestSchedule } from './ingest/schedule';
 import { OrchestratorWorkflow, InformationStepWorkflow, FuelPricesStepWorkflow } from './ingest/workflow';
+import { scheduledTakeSnapshot } from './statistics/statistics';
 
 export { OrchestratorWorkflow, InformationStepWorkflow, FuelPricesStepWorkflow };
 
@@ -25,6 +26,7 @@ export default {
 				await onIngestSchedule();
 				break;
 			case "0 0 * * *":
+				await scheduledTakeSnapshot();
 				break;
 		}
 	},

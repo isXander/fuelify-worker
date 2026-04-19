@@ -1,29 +1,68 @@
-import { WorkflowEntrypoint, WorkflowEvent, WorkflowStep, env } from 'cloudflare:workers';
-import { fetchPFSBearerToken, fetchPFSFuelPrices, fetchPFSInformation } from '../fuelfinder/fetch';
-import { cellToParent, latLngToCell } from 'h3-js';
-import { DayHours } from '../fuelfinder/types';
-import { DaySchedule, OpeningHours } from '../api/types';
+import {env, WorkflowEntrypoint, WorkflowEvent, WorkflowStep} from 'cloudflare:workers';
+import {fetchPFSBearerToken, fetchPFSFuelPrices, fetchPFSInformation} from '../fuelfinder/fetch';
+import {cellToParent, latLngToCell} from 'h3-js';
+import {DayHours} from '../fuelfinder/types';
+import {DaySchedule, OpeningHours} from '../api/types';
 
 type StepParams = {
 	batchNumber: number,
 	incrementalFrom: string | null,
+	parentInstanceId: string,
+	parentType: 'orchestrator' | 'info' | 'prices',
 }
 
 export class OrchestratorWorkflow extends WorkflowEntrypoint<Env, {}> {
-	async run(_: WorkflowEvent<{}>, step: WorkflowStep) {
-		const workflowId = await step.do('dispatch information stage', async () => {
+	async run(event: WorkflowEvent<{}>, step: WorkflowStep) {
+		await step.do('dispatch information stage', async () => {
 			const lastSyncDate = await env.fuelify_ingest.get('last_sync_date');
-			const wf = await dispatchWorkflow(env.INFORMATION_STEP, 1, lastSyncDate);
-			return wf.id;
+
+			await env.INFORMATION_STEP.create({
+				params: {
+					batchNumber: 1,
+					incrementalFrom: lastSyncDate,
+					parentInstanceId: event.instanceId,
+					parentType: 'orchestrator',
+				}
+			});
 		});
 
-		const infoWorkflow = await env.INFORMATION_STEP.get(workflowId);
-		await waitForWorkflowStep(step, infoWorkflow);
+		await waitForChildren(step);
 	}
 }
 
-export class InformationStepWorkflow extends WorkflowEntrypoint<Env, StepParams> {
+abstract class StepWorkflow extends WorkflowEntrypoint<Env, StepParams> {
 	async run(event: WorkflowEvent<StepParams>, step: WorkflowStep) {
+		try {
+			await this.run0(event, step);
+		} finally {
+			// each workflow waits for an event sent from its child to finish
+			// we need to ensure that this event is always sent so we don't time out
+
+			let parentWorkflowBinding: Workflow<Readonly<StepParams>>;
+			switch (event.payload.parentType) {
+				case 'orchestrator':
+					parentWorkflowBinding = env.INGESTION_ORCHESTRATOR;
+					break;
+				case 'info':
+					parentWorkflowBinding = env.INFORMATION_STEP;
+					break;
+				case 'prices':
+					parentWorkflowBinding = env.FUEL_PRICES_STEP;
+					break;
+			}
+			const parentWorkflow = await parentWorkflowBinding.get(event.payload.parentInstanceId);
+			await parentWorkflow.sendEvent({
+				type: 'children-complete',
+				payload: {},
+			})
+		}
+	}
+
+	abstract run0(event: Readonly<WorkflowEvent<StepParams>>, step: WorkflowStep): Promise<unknown>;
+}
+
+export class InformationStepWorkflow extends StepWorkflow {
+	async run0(event: WorkflowEvent<StepParams>, step: WorkflowStep) {
 		// get the data from the Fuel Finder API.
 		const infoData = await step.do(
 			'get batch from gov.uk',
@@ -38,13 +77,18 @@ export class InformationStepWorkflow extends WorkflowEntrypoint<Env, StepParams>
 		// the reason we can't do information and prices concurrently is because
 		// price rows hold a foreign key reference to the stations table.
 		if (infoData === 'no_more_batches') {
-			const workflowId = await step.do('dispatch prices stage', async () => {
-				const wf = await dispatchWorkflow(env.FUEL_PRICES_STEP, 1, event.payload.incrementalFrom);
-				return wf.id;
+			await step.do('dispatch prices stage', async () => {
+				await env.FUEL_PRICES_STEP.create({
+					params: {
+						batchNumber: 1,
+						incrementalFrom: event.payload.incrementalFrom,
+						parentInstanceId: event.instanceId,
+						parentType: 'info',
+					}
+				});
 			});
 
-			const pricesWorkflow = await env.FUEL_PRICES_STEP.get(workflowId);
-			await waitForWorkflowStep(step, pricesWorkflow);
+			await waitForChildren(step);
 
 			return;
 		}
@@ -146,13 +190,20 @@ export class InformationStepWorkflow extends WorkflowEntrypoint<Env, StepParams>
 		});
 
 		await step.do('dispatch next step', async () => {
-			await dispatchWorkflow(env.INFORMATION_STEP, event.payload.batchNumber + 1, event.payload.incrementalFrom);
+			await env.INFORMATION_STEP.create({
+				params: {
+					batchNumber: event.payload.batchNumber + 1,
+					incrementalFrom: event.payload.incrementalFrom,
+					parentInstanceId: event.instanceId,
+					parentType: 'info',
+				}
+			});
 		});
 	}
 }
 
-export class FuelPricesStepWorkflow extends WorkflowEntrypoint<Env, StepParams> {
-	async run(event: WorkflowEvent<StepParams>, step: WorkflowStep) {
+export class FuelPricesStepWorkflow extends StepWorkflow {
+	async run0(event: WorkflowEvent<StepParams>, step: WorkflowStep) {
 		const pricesData = await step.do(
 			'get batch from gov.uk',
 			{ retries: { limit: 3, delay: '10 seconds', backoff: 'linear' } },
@@ -203,13 +254,18 @@ export class FuelPricesStepWorkflow extends WorkflowEntrypoint<Env, StepParams> 
 			}
 		});
 
-		const nextWorkflowId = await step.do('dispatch next step', async () => {
-			const wf = await dispatchWorkflow(env.FUEL_PRICES_STEP, event.payload.batchNumber + 1, event.payload.incrementalFrom);
-			return wf.id;
+		await step.do('dispatch next step', async () => {
+			await env.FUEL_PRICES_STEP.create({
+				params: {
+					batchNumber: event.payload.batchNumber + 1,
+					incrementalFrom: event.payload.incrementalFrom,
+					parentInstanceId: event.instanceId,
+					parentType: 'prices',
+				}
+			});
 		});
 
-		const nextWorkflow = await env.FUEL_PRICES_STEP.get(nextWorkflowId);
-		await waitForWorkflowStep(step, nextWorkflow);
+		await waitForChildren(step);
 	}
 
 	private normalizePrice(price: number): number {
@@ -225,21 +281,15 @@ export class FuelPricesStepWorkflow extends WorkflowEntrypoint<Env, StepParams> 
 	}
 }
 
-export async function dispatchWorkflow(workflow: Workflow<Readonly<StepParams>>, batchNumber: number, incrementalFrom: string | null) {
-	return await workflow.create({
-		params: {
-			batchNumber: batchNumber,
-			incrementalFrom: incrementalFrom,
-		}
-	});
-}
-
-function waitForWorkflowStep(step: WorkflowStep, workflow: WorkflowInstance, pollIntervalMs = 5_000) {
-	return step.do('wait for children to complete', async () => {
-		while (['running', 'queued', 'paused', 'waitingToPause'].includes((await workflow.status()).status)) {
-			await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
-		}
-	});
+async function waitForChildren(step: WorkflowStep) {
+	try {
+		await step.waitForEvent<{}>('wait for children to complete', {
+			type: 'children-complete',
+			timeout: '30 minutes',
+		});
+	} catch (e) {
+		console.log({ 'type':'children-wait-timeout' })
+	}
 }
 
 async function getOrFetchToken(): Promise<string> {

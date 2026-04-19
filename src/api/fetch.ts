@@ -1,12 +1,13 @@
-import { Hono } from 'hono';
+import {Context, Hono} from 'hono';
 import { proxyFetch } from '../fuelfinder/proxy';
 import { gridDisk, isValidCell, getResolution } from 'h3-js';
 import {
 	Amenity, FuelPriceSample, FuelType, OpeningHours,
 	Station, StationsListResponse, PriceHistoryResponse,
 	NearbyStationsRequest, GetStationsRequest, PriceHistoryRequest,
-	historyIntervalDays,
+	historyIntervalDays, fuelTypeFromDb, fuelTypeToDb,
 } from './types';
+import { getRegionStatistics } from '../statistics/statistics';
 
 const MAX_SEARCH_RADIUS = 10;
 
@@ -15,32 +16,10 @@ export function onApiFetch(request: Request, env: Env, ctx: ExecutionContext): R
 		.post("/nearby", getNearbyStations)
 		.post("/stations", getStationsById)
 		.post("/price_history", getPriceHistory)
+		.post("/region_statistics", getRegionStatistics)
 		.all("/fuel-finder-proxy/:path{.+}", fuelFinderProxy);
 
 	return app.fetch(request, env, ctx);
-}
-
-function fuelTypeFromDb(s: string): FuelType | null {
-	switch (s) {
-		case 'E10':        return 'E10';
-		case 'E5':         return 'E5';
-		case 'HVO':        return 'HVO';
-		case 'B10':        return 'B10';
-		case 'B7_STANDARD': return 'B7STANDARD';
-		case 'B7_PREMIUM':  return 'B7PREMIUM';
-		default:           return null;
-	}
-}
-
-function fuelTypeToDb(ft: FuelType): string {
-	switch (ft) {
-		case 'E10':       return 'E10';
-		case 'E5':        return 'E5';
-		case 'HVO':       return 'HVO';
-		case 'B10':       return 'B10';
-		case 'B7STANDARD': return 'B7_STANDARD';
-		case 'B7PREMIUM':  return 'B7_PREMIUM';
-	}
 }
 
 interface StationRow {
@@ -130,7 +109,7 @@ const LATEST_FUEL_PRICE_FILTER = `
 
 type AppContext = { Bindings: Env };
 
-async function getNearbyStations(c: import('hono').Context<AppContext>): Promise<Response> {
+async function getNearbyStations(c: Context<AppContext>): Promise<Response> {
 	let body: NearbyStationsRequest;
 	try {
 		body = await c.req.json<NearbyStationsRequest>();
@@ -184,7 +163,7 @@ async function getNearbyStations(c: import('hono').Context<AppContext>): Promise
 	return Response.json({ results: buildStations(results) } satisfies StationsListResponse);
 }
 
-async function getStationsById(c: import('hono').Context<AppContext>): Promise<Response> {
+async function getStationsById(c: Context<AppContext>): Promise<Response> {
 	let body: GetStationsRequest;
 	try {
 		body = await c.req.json<GetStationsRequest>();
@@ -208,7 +187,7 @@ async function getStationsById(c: import('hono').Context<AppContext>): Promise<R
 	return Response.json({ results: buildStations(results) } satisfies StationsListResponse);
 }
 
-async function getPriceHistory(c: import('hono').Context<AppContext>): Promise<Response> {
+async function getPriceHistory(c: Context<AppContext>): Promise<Response> {
 	let body: PriceHistoryRequest;
 	try {
 		body = await c.req.json<PriceHistoryRequest>();
@@ -238,7 +217,7 @@ async function getPriceHistory(c: import('hono').Context<AppContext>): Promise<R
 	return Response.json({ samples } satisfies PriceHistoryResponse);
 }
 
-async function fuelFinderProxy(c: import('hono').Context<AppContext>): Promise<Response> {
+async function fuelFinderProxy(c: Context<AppContext>): Promise<Response> {
 	const subPath = c.req.param('path');
 	return proxyFetch(c.req.raw, '/' + subPath, c.env);
 }

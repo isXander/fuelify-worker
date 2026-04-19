@@ -79,7 +79,6 @@ export interface BankHoliday {
 
 export type BankHolidayType = 'standard' | 'bank holiday';
 
-// TODO: investigate if there are more fuel types
 export type FuelType = 'E5' | 'E10' | 'HVO' | 'B10' | 'B7_STANDARD' | 'B7_PREMIUM';
 
 export interface PFSFuelPrices {
