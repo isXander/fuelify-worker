@@ -1,8 +1,20 @@
 import {env, WorkflowEntrypoint, WorkflowEvent, WorkflowStep} from 'cloudflare:workers';
 import {fetchPFSBearerToken, fetchPFSFuelPrices, fetchPFSInformation} from '../fuelfinder/fetch';
 import {cellToParent, latLngToCell} from 'h3-js';
-import {DayHours} from '../fuelfinder/types';
+import {DayHours, FuelType as PFSFuelType} from '../fuelfinder/types';
 import {DaySchedule, OpeningHours} from '../api/types';
+
+// Convert the PFS API's fuel-type spelling to the DB's (matches the Rust ingest output).
+function pfsFuelTypeToDb(ft: PFSFuelType): string {
+	switch (ft) {
+		case 'E5':          return 'E5';
+		case 'E10':         return 'E10';
+		case 'HVO':         return 'HVO';
+		case 'B10':         return 'B10';
+		case 'B7_STANDARD': return 'B7Standard';
+		case 'B7_PREMIUM':  return 'B7Premium';
+	}
+}
 
 type StepParams = {
 	batchNumber: number,
@@ -253,7 +265,7 @@ export class FuelPricesStepWorkflow extends StepWorkflow {
 					statements.push(
 						statement.bind(
 							station.node_id,
-							fuelPrice.fuel_type,
+							pfsFuelTypeToDb(fuelPrice.fuel_type),
 							priceTenths,
 							fuelPrice.price_change_effective_timestamp
 						)

@@ -10,17 +10,9 @@ export async function proxyFetch(request: Request, path: string, env: Env): Prom
 	const url = new URL(request.url);
 	const upstreamUrl = `${FUEL_FINDER_API_ENDPOINT}${path}${url.search}`;
 
-	// Don't forward client-side auth headers or Host to GOV.UK. In particular, the
-	// internal X-Fuelify-Secret validated above must not leak into upstream access logs.
-	const upstreamHeaders = new Headers();
-	for (const [name, value] of request.headers) {
-		const lower = name.toLowerCase();
-		if (lower === XFuelifySecret.toLowerCase()) continue;
-		if (lower === 'authorization') continue;
-		if (lower === 'cookie') continue;
-		if (lower === 'host') continue;
-		upstreamHeaders.set(name, value);
-	}
+	// Don't leak our internal proxy secret into GOV.UK's access logs.
+	const upstreamHeaders = new Headers(request.headers);
+	upstreamHeaders.delete(XFuelifySecret);
 
 	const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
 	const upstream = new Request(upstreamUrl, {
