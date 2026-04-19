@@ -122,6 +122,14 @@ async function getNearbyStations(c: Context<AppContext>): Promise<Response> {
 		return errorResponse(400, 'origin must be a valid H3 cell at resolution 6');
 	}
 
+	if (!isFuelType(body.fuel_type)) {
+		return errorResponse(400, 'fuel_type must be a valid fuel type');
+	}
+
+	if (!Number.isInteger(body.k_rings) || body.k_rings < 0) {
+		return errorResponse(400, 'k_rings must be a non-negative integer');
+	}
+
 	if (body.k_rings > MAX_SEARCH_RADIUS) {
 		return errorResponse(400, `k_rings must be <= ${MAX_SEARCH_RADIUS}`);
 	}
