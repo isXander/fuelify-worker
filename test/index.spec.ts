@@ -1,29 +1,56 @@
-import {
-	env,
-	createExecutionContext,
-	waitOnExecutionContext,
-	SELF,
-} from "cloudflare:test";
-import { describe, it, expect } from "vitest";
+import { SELF, env, createScheduledController } from "cloudflare:test";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import worker from "../src/index";
+import { resetDatabase } from "./helpers";
 
-// For now, you'll need to do something like this to get a correctly-typed
-// `Request` to pass to `worker.fetch()`.
-const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
+beforeEach(async () => {
+	await resetDatabase();
+});
 
-describe("Hello World worker", () => {
-	it("responds with Hello World! (unit style)", async () => {
-		const request = new IncomingRequest("http://example.com");
-		// Create an empty context to pass to `worker.fetch()`.
-		const ctx = createExecutionContext();
-		const response = await worker.fetch(request, env, ctx);
-		// Wait for all `Promise`s passed to `ctx.waitUntil()` to settle before running test assertions
-		await waitOnExecutionContext(ctx);
-		expect(await response.text()).toMatchInlineSnapshot(`"Hello World!"`);
+describe("worker entrypoint", () => {
+	it("delegates fetch to the API router", async () => {
+		const res = await SELF.fetch("https://example.com/no-such-route");
+		expect(res.status).toBe(404);
 	});
 
-	it("responds with Hello World! (integration style)", async () => {
-		const response = await SELF.fetch("https://example.com");
-		expect(await response.text()).toMatchInlineSnapshot(`"Hello World!"`);
+	it("ignores cron triggers that don't match either schedule", async () => {
+		const ctx = new (class {
+			waitUntil() {}
+			passThroughOnException() {}
+			props = {};
+		})() as unknown as ExecutionContext;
+
+		const controller = createScheduledController({
+			cron: "* * * * *",
+			scheduledTime: Date.now(),
+		});
+
+		await expect(
+			worker.scheduled!(controller, env, ctx),
+		).resolves.toBeUndefined();
+	});
+
+	it("runs the snapshot job when the daily cron fires", async () => {
+		const ctx = new (class {
+			waitUntil() {}
+			passThroughOnException() {}
+			props = {};
+		})() as unknown as ExecutionContext;
+
+		const controller = createScheduledController({
+			cron: "0 0 * * *",
+			scheduledTime: Date.now(),
+		});
+
+		// No stations seeded → snapshot inserts nothing, but should not throw.
+		await worker.scheduled!(controller, env, ctx);
+
+		const { results } = await env.DB.prepare(
+			`SELECT COUNT(*) AS n FROM regional_statistics`,
+		).all<{ n: number }>();
+		expect(results[0].n).toBe(0);
 	});
 });
+
+// Avoid an unused-warning for the imported helper.
+void vi;
