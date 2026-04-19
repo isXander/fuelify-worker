@@ -11,7 +11,7 @@
  * Learn more at https://developers.cloudflare.com/workers/
  */
 import { onApiFetch } from './api/fetch';
-import { onIngestSchedule } from './ingest/schedule';
+import { onIngestScheduleTemp } from './ingest/schedule';
 import { OrchestratorWorkflow, InformationStepWorkflow, FuelPricesStepWorkflow } from './ingest/workflow';
 import { scheduledTakeSnapshot } from './statistics/statistics';
 
@@ -23,7 +23,7 @@ export default {
 	async scheduled(controller, env, ctx) {
 		switch (controller.cron) {
 			case "*/15 * * * *":
-				await onIngestSchedule();
+				await onIngestScheduleTemp();
 				break;
 			case "0 0 * * *":
 				await scheduledTakeSnapshot();
