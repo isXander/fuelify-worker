@@ -1,7 +1,12 @@
 import { env } from 'cloudflare:workers';
 
 export async function onIngestSchedule() {
-	const workflow = await env.INGESTION_ORCHESTRATOR.get("only-orchestrator").catch(() => null);
+	let workflow: WorkflowInstance | null = null
+	try {
+		workflow = await env.INGESTION_ORCHESTRATOR.get("only-orchestrator").catch(() => null);
+	} catch (e) {
+		console.log({ "type": "failed_get_workflow", "error": e })
+	}
 
 	if (workflow) {
 		const status = await workflow.status();
