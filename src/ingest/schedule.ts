@@ -14,6 +14,7 @@ export async function onIngestSchedule() {
 		}
 
 		if (restartableStatuses.includes(status.status)) {
+			console.log({ "type": "workflow_restarting", "status": status.status })
 			await workflow.restart();
 			return;
 		}
