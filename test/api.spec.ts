@@ -1,13 +1,16 @@
 import { SELF } from "cloudflare:test";
 import { describe, it, expect, beforeEach } from "vitest";
+import { gridDisk } from "h3-js";
 import {
 	insertPrice,
 	insertStation,
 	resetDatabase,
 	LONDON_R6,
+	LONDON_R3,
 	MANCHESTER_R6,
 } from "./helpers";
 import type {
+	FetchH3CellsRequest,
 	GetStationsRequest,
 	NearbyStationsRequest,
 	PriceHistoryRequest,
@@ -182,6 +185,125 @@ describe("POST /nearby", () => {
 	});
 });
 
+describe("POST /h3_cells", () => {
+	it("returns 400 when body is not JSON", async () => {
+		const res = await SELF.fetch("https://example.com/h3_cells", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: "not-json",
+		});
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({
+			success: false,
+			message: "Invalid request body",
+		});
+	});
+
+	it("returns 400 when h3_cells is missing or empty", async () => {
+		const res = await POST("/h3_cells", {
+			fuel_type: "E10",
+			h3_cells: [],
+		} satisfies FetchH3CellsRequest);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { message: string };
+		expect(body.message).toContain("h3_cells");
+	});
+
+	it("returns 400 when h3_cells exceeds the k-ring 5 disk size", async () => {
+		const cells = [...gridDisk(LONDON_R6, 5), MANCHESTER_R6];
+		expect(cells).toHaveLength(92);
+
+		const res = await POST("/h3_cells", {
+			fuel_type: "E10",
+			h3_cells: cells,
+		} satisfies FetchH3CellsRequest);
+
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { message: string };
+		expect(body.message).toContain("91");
+	});
+
+	it("returns 400 when any cell is invalid or at the wrong resolution", async () => {
+		const invalid = await POST("/h3_cells", {
+			fuel_type: "E10",
+			h3_cells: [LONDON_R6, "not-an-h3-cell"],
+		} satisfies FetchH3CellsRequest);
+		expect(invalid.status).toBe(400);
+
+		const wrongResolution = await POST("/h3_cells", {
+			fuel_type: "E10",
+			h3_cells: [LONDON_R3],
+		} satisfies FetchH3CellsRequest);
+		expect(wrongResolution.status).toBe(400);
+	});
+
+	it("returns matching stations with their latest fuel price", async () => {
+		await insertStation({ id: "S1", trading_name: "ALPHA" });
+		await insertStation({ id: "S2", trading_name: "BETA", h3_index_r6: MANCHESTER_R6 });
+		await insertPrice({
+			station_id: "S1",
+			fuel_type: "E10",
+			price: 1450,
+			effective_date: "2026-04-10T12:00:00Z",
+		});
+		await insertPrice({
+			station_id: "S1",
+			fuel_type: "E10",
+			price: 1399,
+			effective_date: "2026-04-15T12:00:00Z",
+		});
+		await insertPrice({
+			station_id: "S1",
+			fuel_type: "B7Standard",
+			price: 1550,
+			effective_date: "2026-04-12T12:00:00Z",
+		});
+		await insertPrice({
+			station_id: "S2",
+			fuel_type: "E10",
+			price: 1500,
+			effective_date: "2026-04-15T12:00:00Z",
+		});
+
+		const res = await POST("/h3_cells", {
+			fuel_type: "E10",
+			h3_cells: [LONDON_R6],
+		} satisfies FetchH3CellsRequest);
+
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as StationsListResponse;
+		expect(body.results.map((s) => s.info.station_id)).toEqual(["S1"]);
+
+		const station = body.results[0];
+		expect(station.latest_fuel_prices.E10).toEqual({
+			price: 139.9,
+			effective_date: "2026-04-15T12:00:00Z",
+		});
+		expect(station.latest_fuel_prices.B7STANDARD).toEqual({
+			price: 155.0,
+			effective_date: "2026-04-12T12:00:00Z",
+		});
+	});
+
+	it("excludes stations without a price for the requested fuel type", async () => {
+		await insertStation({ id: "S1" });
+		await insertPrice({
+			station_id: "S1",
+			fuel_type: "B7Standard",
+			price: 1500,
+			effective_date: "2026-04-15T12:00:00Z",
+		});
+
+		const res = await POST("/h3_cells", {
+			fuel_type: "E10",
+			h3_cells: [LONDON_R6],
+		} satisfies FetchH3CellsRequest);
+
+		const body = (await res.json()) as StationsListResponse;
+		expect(body.results).toEqual([]);
+	});
+});
+
 describe("POST /stations", () => {
 	it("returns 400 when body is not JSON", async () => {
 		const res = await SELF.fetch("https://example.com/stations", {
@@ -328,6 +450,3 @@ describe("unknown routes", () => {
 		expect(res.status).toBe(404);
 	});
 });
-
-// Suppress unused import warning when only fixtures are used.
-void MANCHESTER_R6;

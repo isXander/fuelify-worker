@@ -6,6 +6,11 @@ export interface NearbyStationsRequest {
 	k_rings: number;
 }
 
+export interface FetchH3CellsRequest {
+	fuel_type: FuelType;
+	h3_cells: string[];
+}
+
 export interface GetStationsRequest {
 	station_ids: string[];
 }

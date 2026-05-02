@@ -4,17 +4,19 @@ import { gridDisk, isValidCell, getResolution } from 'h3-js';
 import {
 	Amenity, FuelPriceSample, FuelType, OpeningHours,
 	Station, StationsListResponse, PriceHistoryResponse,
-	NearbyStationsRequest, GetStationsRequest, PriceHistoryRequest,
+	NearbyStationsRequest, FetchH3CellsRequest, GetStationsRequest, PriceHistoryRequest,
 	historyIntervalDays, fuelTypeFromDb, fuelTypeToDb,
 	isFuelType, isHistoryInterval,
 } from './types';
 import { getRegionStatistics } from '../statistics/statistics';
 
 const MAX_SEARCH_RADIUS = 10;
+const MAX_H3_CELL_FETCH_CELLS = 3 * 5 * (5 + 1) + 1;
 
 export function onApiFetch(request: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> {
 	const app = new Hono<{ Bindings: Env }>()
 		.post("/nearby", getNearbyStations)
+		.post("/h3_cells", getStationsByH3Cells)
 		.post("/stations", getStationsById)
 		.post("/price_history", getPriceHistory)
 		.post("/region_statistics", getRegionStatistics)
@@ -135,9 +137,50 @@ async function getNearbyStations(c: Context<AppContext>): Promise<Response> {
 	}
 
 	const searchCellsJson = JSON.stringify(gridDisk(body.origin, body.k_rings));
-	const fuelTypeDb = fuelTypeToDb(body.fuel_type);
+	const { results } = await fetchStationsInH3Cells(c.env.DB, body.fuel_type, searchCellsJson);
 
-	const { results } = await c.env.DB.prepare(`
+	return Response.json({ results: buildStations(results) } satisfies StationsListResponse);
+}
+
+async function getStationsByH3Cells(c: Context<AppContext>): Promise<Response> {
+	let body: FetchH3CellsRequest;
+	try {
+		body = await c.req.json<FetchH3CellsRequest>();
+	} catch {
+		return errorResponse(400, 'Invalid request body');
+	}
+
+	if (!Array.isArray(body.h3_cells) || body.h3_cells.length === 0) {
+		return errorResponse(400, 'h3_cells must be a non-empty array');
+	}
+
+	if (body.h3_cells.length > MAX_H3_CELL_FETCH_CELLS) {
+		return errorResponse(400, `h3_cells must contain <= ${MAX_H3_CELL_FETCH_CELLS} cells`);
+	}
+
+	for (const cell of body.h3_cells) {
+		if (!isValidCell(cell) || getResolution(cell) !== 6) {
+			return errorResponse(400, 'h3_cells must all be valid H3 cells at resolution 6');
+		}
+	}
+
+	if (!isFuelType(body.fuel_type)) {
+		return errorResponse(400, 'fuel_type must be a valid fuel type');
+	}
+
+	const { results } = await fetchStationsInH3Cells(c.env.DB, body.fuel_type, JSON.stringify(body.h3_cells));
+
+	return Response.json({ results: buildStations(results) } satisfies StationsListResponse);
+}
+
+async function fetchStationsInH3Cells(
+	db: D1Database,
+	fuelType: FuelType,
+	searchCellsJson: string,
+): Promise<D1Result<StationRow>> {
+	const fuelTypeDb = fuelTypeToDb(fuelType);
+
+	return db.prepare(`
 		WITH requested_latest AS (
 			SELECT fp.station_id, MAX(fp.effective_date) AS requested_effective_date
 			FROM fuel_prices fp
@@ -168,8 +211,6 @@ async function getNearbyStations(c: Context<AppContext>): Promise<Response> {
 		WHERE ${LATEST_FUEL_PRICE_FILTER}
 		ORDER BY ss.requested_effective_date DESC, ss.trading_name ASC, fp.fuel_type ASC
 	`).bind(fuelTypeDb, searchCellsJson).all<StationRow>();
-
-	return Response.json({ results: buildStations(results) } satisfies StationsListResponse);
 }
 
 async function getStationsById(c: Context<AppContext>): Promise<Response> {
