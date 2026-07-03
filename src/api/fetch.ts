@@ -181,35 +181,39 @@ async function fetchStationsInH3Cells(
 	const fuelTypeDb = fuelTypeToDb(fuelType);
 
 	return db.prepare(`
-		WITH requested_latest AS (
-			SELECT fp.station_id, MAX(fp.effective_date) AS requested_effective_date
-			FROM fuel_prices fp
-			WHERE fp.fuel_type = ?1
-			GROUP BY fp.station_id
-		),
-		selected_stations AS (
+		WITH selected_stations AS (
 			SELECT s.id AS station_id, s.phone_number, s.trading_name, s.brand_name,
 			       s.trading_as_brand, s.temporary_closure, s.permanent_closure, s.motorway, s.supermarket,
 			       s.address_line_1, s.address_line_2, s.city, s.county, s.country, s.postcode,
-			       s.latitude, s.longitude, s.h3_index_r6, s.h3_index_r3, s.amenities, s.opening_hours,
-			       rl.requested_effective_date
+			       s.latitude, s.longitude, s.h3_index_r6, s.h3_index_r3, s.amenities, s.opening_hours
 			FROM stations s
-			INNER JOIN requested_latest rl ON rl.station_id = s.id
 			WHERE s.h3_index_r6 IN (SELECT value FROM json_each(?2))
 			AND s.temporary_closure = FALSE
 			AND s.permanent_closure = FALSE
-			ORDER BY rl.requested_effective_date DESC, s.trading_name ASC
+		),
+		requested_latest AS (
+			SELECT ss.station_id, MAX(fp.effective_date) AS requested_effective_date
+			FROM selected_stations ss
+			INNER JOIN fuel_prices fp ON fp.station_id = ss.station_id
+			WHERE fp.fuel_type = ?1
+			GROUP BY ss.station_id
+		),
+		limited_stations AS (
+			SELECT ss.*, rl.requested_effective_date
+			FROM selected_stations ss
+			INNER JOIN requested_latest rl ON rl.station_id = ss.station_id
+			ORDER BY rl.requested_effective_date DESC, ss.trading_name ASC
 			LIMIT 200
 		)
-		SELECT ss.station_id, ss.phone_number, ss.trading_name, ss.brand_name,
-		       ss.trading_as_brand, ss.temporary_closure, ss.permanent_closure, ss.motorway, ss.supermarket,
-		       ss.address_line_1, ss.address_line_2, ss.city, ss.county, ss.country, ss.postcode,
-		       ss.latitude, ss.longitude, ss.h3_index_r6, ss.h3_index_r3, ss.amenities, ss.opening_hours,
+		SELECT ls.station_id, ls.phone_number, ls.trading_name, ls.brand_name,
+		       ls.trading_as_brand, ls.temporary_closure, ls.permanent_closure, ls.motorway, ls.supermarket,
+		       ls.address_line_1, ls.address_line_2, ls.city, ls.county, ls.country, ls.postcode,
+		       ls.latitude, ls.longitude, ls.h3_index_r6, ls.h3_index_r3, ls.amenities, ls.opening_hours,
 		       fp.fuel_type, fp.price, fp.effective_date
-		FROM selected_stations ss
-		INNER JOIN fuel_prices fp ON fp.station_id = ss.station_id
+		FROM limited_stations ls
+		INNER JOIN fuel_prices fp ON fp.station_id = ls.station_id
 		WHERE ${LATEST_FUEL_PRICE_FILTER}
-		ORDER BY ss.requested_effective_date DESC, ss.trading_name ASC, fp.fuel_type ASC
+		ORDER BY ls.requested_effective_date DESC, ls.trading_name ASC, fp.fuel_type ASC
 	`).bind(fuelTypeDb, searchCellsJson).all<StationRow>();
 }
 
