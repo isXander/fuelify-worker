@@ -260,6 +260,15 @@ export class FuelPricesStepWorkflow extends StepWorkflow {
 				WHERE fuel_prices.price != EXCLUDED.price
 			`);
 
+			const latestStatement = env.DB.prepare(`
+				INSERT INTO latest_fuel_price (station_id, fuel_type, price, effective_date)
+				VALUES (?1, ?2, ?3, ?4)
+				ON CONFLICT (station_id, fuel_type) DO UPDATE SET 
+					price = EXCLUDED.price,
+					effective_date = EXCLUDED.effective_date
+				WHERE EXCLUDED.effective_date >= latest_fuel_price.effective_date
+			`);
+
 			const statements: D1PreparedStatement[] = [];
 
 			for (const station of pricesData) {
@@ -268,6 +277,15 @@ export class FuelPricesStepWorkflow extends StepWorkflow {
 
 					statements.push(
 						statement.bind(
+							station.node_id,
+							pfsFuelTypeToDb(fuelPrice.fuel_type),
+							priceTenths,
+							fuelPrice.price_change_effective_timestamp
+						)
+					);
+
+					statements.push(
+						latestStatement.bind(
 							station.node_id,
 							pfsFuelTypeToDb(fuelPrice.fuel_type),
 							priceTenths,

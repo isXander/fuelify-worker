@@ -103,12 +103,7 @@ function buildStations(rows: StationRow[]): Station[] {
 	return stations;
 }
 
-const LATEST_FUEL_PRICE_FILTER = `
-	fp.effective_date = (
-		SELECT MAX(fp2.effective_date) FROM fuel_prices fp2
-		WHERE fp2.station_id = fp.station_id AND fp2.fuel_type = fp.fuel_type
-	)
-`;
+
 
 type AppContext = { Bindings: Env };
 
@@ -192,11 +187,10 @@ async function fetchStationsInH3Cells(
 			AND s.permanent_closure = FALSE
 		),
 		requested_latest AS (
-			SELECT ss.station_id, MAX(fp.effective_date) AS requested_effective_date
+			SELECT ss.station_id, fp.effective_date AS requested_effective_date
 			FROM selected_stations ss
-			INNER JOIN fuel_prices fp ON fp.station_id = ss.station_id
+			INNER JOIN latest_fuel_price fp ON fp.station_id = ss.station_id
 			WHERE fp.fuel_type = ?1
-			GROUP BY ss.station_id
 		),
 		limited_stations AS (
 			SELECT ss.*, rl.requested_effective_date
@@ -211,8 +205,7 @@ async function fetchStationsInH3Cells(
 		       ls.latitude, ls.longitude, ls.h3_index_r6, ls.h3_index_r3, ls.amenities, ls.opening_hours,
 		       fp.fuel_type, fp.price, fp.effective_date
 		FROM limited_stations ls
-		INNER JOIN fuel_prices fp ON fp.station_id = ls.station_id
-		WHERE ${LATEST_FUEL_PRICE_FILTER}
+		INNER JOIN latest_fuel_price fp ON fp.station_id = ls.station_id
 		ORDER BY ls.requested_effective_date DESC, ls.trading_name ASC, fp.fuel_type ASC
 	`).bind(fuelTypeDb, searchCellsJson).all<StationRow>();
 }
@@ -240,9 +233,8 @@ async function getStationsById(c: Context<AppContext>): Promise<Response> {
 		       s.latitude, s.longitude, s.h3_index_r6, s.h3_index_r3, s.amenities, s.opening_hours,
 		       fp.fuel_type, fp.price, fp.effective_date
 		FROM stations s
-		INNER JOIN fuel_prices fp ON fp.station_id = s.id
+		INNER JOIN latest_fuel_price fp ON fp.station_id = s.id
 		WHERE s.id IN (SELECT value FROM json_each(?1))
-		AND ${LATEST_FUEL_PRICE_FILTER}
 		ORDER BY s.trading_name ASC, fp.fuel_type ASC
 	`).bind(JSON.stringify(body.station_ids)).all<StationRow>();
 

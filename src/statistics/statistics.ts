@@ -109,16 +109,10 @@ async function computeRegionStatistics(
 	const { results } = await env.DB.prepare(`
 		SELECT fp.price
 		FROM stations s
-		JOIN fuel_prices fp ON fp.station_id = s.id
+		JOIN latest_fuel_price fp ON fp.station_id = s.id
 		WHERE s.${column} IN (SELECT value FROM json_each(?1))
 			AND s.motorway = 0
 			AND fp.fuel_type = ?2
-			AND fp.effective_date = (
-				SELECT MAX(fp2.effective_date)
-				FROM fuel_prices fp2
-				WHERE fp2.station_id = s.id
-					AND fp2.fuel_type = ?2
-			)
 	`).bind(JSON.stringify(cells), fuelTypeToDb(fuelType)).all<{ price: number }>();
 
 	if (results.length === 0) return null;
